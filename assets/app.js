@@ -220,10 +220,23 @@
     }
     var item = state.currentQuote;
     quoteEl.innerHTML = renderQuoteHtml(item.q, item.t);
-    var sourceHtml = escapeHtml(item.title) + " · " + escapeHtml(item.author);
-    if (item.kind === "역") {
+    var title = item.title || "";
+    var author = item.author || "";
+    var sourceHtml;
+    if (title && author) {
+      sourceHtml = escapeHtml(title) + " · " + escapeHtml(author);
+    } else {
+      sourceHtml = escapeHtml(title || author);
+    }
+    if (item.kind === "역" || item.kind === "창작") {
       sourceHtml +=
-        ' <span class="badge-trans" title="번역" aria-label="번역">역</span>';
+        ' <span class="badge-trans" title="' +
+        escapeHtml(item.kind) +
+        '" aria-label="' +
+        escapeHtml(item.kind) +
+        '">' +
+        escapeHtml(item.kind) +
+        "</span>";
     }
     sourceEl.innerHTML = sourceHtml;
   }

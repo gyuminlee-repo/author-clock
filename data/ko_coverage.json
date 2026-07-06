@@ -242,13 +242,14 @@
  "total_quotes": 882,
  "substring_verified": true,
  "hybrid": {
-  "model": "minute-primary with daypart fallback",
-  "minute_keys_with_own_quote": 1409,
-  "minutes_fallback_to_daypart": 31,
+  "model": "minute-primary, every minute filled with a real quote",
+  "minute_keys_with_own_quote": 1440,
+  "minutes_fallback_to_daypart": 0,
   "original_korean_precise": 57,
   "original_korean_daypart": 825,
-  "translated_from_english": 1409,
-  "total_entries": 2291,
-  "note": "번역문(kind=역)은 영어 문학시계 인용을 한국어로 옮긴 것으로 원저자의 한국어 원문이 아님. 원문(kind=원문)은 저작권 만료 한국문학 발췌."
+  "translated_from_english_or_foreign": 1440,
+  "composed_filler": 0,
+  "total_entries": 2322,
+  "note": "1440분 전부 실제 출판 문학 인용. 원문(kind=원문)=저작권 만료 한국문학. 역(kind=역)=영어 등 실제 문학 인용을 한국어 번역(원저자 한국어 원문 아님). 창작 없음. 8개 희귀 시각은 추가 literary-clock fork(cdmoro 등)에서 실제 인용 확보."
  }
 }
