@@ -312,6 +312,10 @@
 
   var wakeLockSentinel = null;
   var controlsHideTimer = null;
+  var quoteFitResizeTimer = null;
+  var QUOTE_FIT_MIN_PX = 13;
+  var QUOTE_FIT_STEP = 0.94;
+  var QUOTE_FIT_MAX_ITER = 40;
 
   var state = {
     currentQuote: null,
@@ -347,6 +351,7 @@
     if (!state.currentQuote) {
       quoteEl.textContent = message || "아직 문장이 없습니다.";
       sourceEl.textContent = "";
+      fitQuoteToScreen();
       return;
     }
     var item = state.currentQuote;
@@ -370,6 +375,45 @@
         "</span>";
     }
     sourceEl.innerHTML = sourceHtml;
+    fitQuoteToScreen();
+  }
+
+  /**
+   * Shrink #quote's font size (inline px, overriding the CSS clamp()) just
+   * enough that #stage's content (#quote + #source) fits without vertical
+   * overflow. Starts from the "preferred" size (the CSS clamp()*--quote-scale
+   * value computed with no inline override) and only ever shrinks from
+   * there, the font-scale setting acts as an upper bound, never a lower
+   * one. Stops at QUOTE_FIT_MIN_PX regardless of remaining overflow (clip is
+   * the last resort, not silent infinite shrink). No-op if #quote/#stage are
+   * missing (e.g. under Node).
+   */
+  function fitQuoteToScreen() {
+    if (!quoteEl || !stageEl) return;
+
+    // Clear any prior inline override so getComputedStyle reports the
+    // CSS-declared preferred size (clamp() * var(--quote-scale)).
+    quoteEl.style.fontSize = "";
+    var preferred = parseFloat(window.getComputedStyle(quoteEl).fontSize) || 16;
+
+    var fontSize = preferred;
+    quoteEl.style.fontSize = fontSize + "px";
+
+    var iter = 0;
+    while (
+      stageEl.scrollHeight > stageEl.clientHeight + 1 &&
+      fontSize > QUOTE_FIT_MIN_PX &&
+      iter < QUOTE_FIT_MAX_ITER
+    ) {
+      fontSize = Math.max(QUOTE_FIT_MIN_PX, fontSize * QUOTE_FIT_STEP);
+      quoteEl.style.fontSize = fontSize + "px";
+      iter++;
+    }
+  }
+
+  function scheduleQuoteFit() {
+    if (quoteFitResizeTimer) clearTimeout(quoteFitResizeTimer);
+    quoteFitResizeTimer = setTimeout(fitQuoteToScreen, 120);
   }
 
   function fadeSwap(fn) {
@@ -899,6 +943,7 @@
       var active = btn.getAttribute("data-scale") === scaleKey;
       btn.setAttribute("aria-pressed", active ? "true" : "false");
     });
+    fitQuoteToScreen();
   }
 
   function resetControlsHideTimer() {
@@ -1045,6 +1090,9 @@
     setupFullscreenToggle();
     setupControlsAutoHide();
     registerServiceWorker();
+
+    window.addEventListener("resize", scheduleQuoteFit);
+    window.addEventListener("orientationchange", scheduleQuoteFit);
 
     loadForNow();
     scheduleNextTick();
