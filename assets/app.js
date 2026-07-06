@@ -291,6 +291,9 @@
   var quoteEl = document.getElementById("quote");
   var sourceEl = document.getElementById("source");
   var digitalClockEl = document.getElementById("digital-clock");
+  var bigClockEl = document.getElementById("big-clock");
+  var bigClockTimeEl = bigClockEl ? bigClockEl.querySelector(".big-time") : null;
+  var bigClockAmpmEl = bigClockEl ? bigClockEl.querySelector(".big-ampm") : null;
   var themeToggleEl = document.getElementById("theme-toggle");
   var stageEl = document.getElementById("stage");
   var controlsEl = document.getElementById("controls");
@@ -693,11 +696,27 @@
       .catch(function () {});
   }
 
+  /**
+   * Fill in the landscape big clock (#big-clock) from `date`, reusing
+   * formatKoreanClock's "오전 7:23" output split on the first space.
+   * No-op if the big clock markup isn't present.
+   */
+  function updateBigClock(date) {
+    if (!bigClockTimeEl && !bigClockAmpmEl) return;
+    var text = formatKoreanClock(date);
+    var idx = text.indexOf(" ");
+    var period = idx === -1 ? "" : text.slice(0, idx);
+    var time = idx === -1 ? text : text.slice(idx + 1);
+    if (bigClockAmpmEl) bigClockAmpmEl.textContent = period;
+    if (bigClockTimeEl) bigClockTimeEl.textContent = time;
+  }
+
   function loadForNow() {
     var data = getData();
     var now = new Date();
     var hhmm = formatHHMM(now);
     if (digitalClockEl) digitalClockEl.textContent = formatKoreanClock(now);
+    updateBigClock(now);
 
     var result = pickKoQuote(data, hhmm, true);
     state.currentQuote = result.quote;
@@ -709,6 +728,7 @@
     var now = new Date();
     var hhmm = formatHHMM(now);
     if (digitalClockEl) digitalClockEl.textContent = formatKoreanClock(now);
+    updateBigClock(now);
 
     var pool = buildShufflePool(data, hhmm);
     if (pool.length === 0) {
@@ -771,6 +791,7 @@
     if (!dockOn) {
       if (stageEl) stageEl.style.transform = "translate(0px, 0px)";
       if (digitalClockEl) digitalClockEl.style.transform = "translate(0px, 0px)";
+      if (bigClockEl) bigClockEl.style.transform = "translate(0px, 0px)";
       return;
     }
     var t = Date.now() / 60000; // slow drift, minute-scale period
@@ -781,6 +802,7 @@
     var transform = "translate(" + x.toFixed(2) + "px, " + y.toFixed(2) + "px)";
     if (stageEl) stageEl.style.transform = transform;
     if (digitalClockEl) digitalClockEl.style.transform = transform;
+    if (bigClockEl) bigClockEl.style.transform = transform;
   }
 
   function requestWakeLock() {

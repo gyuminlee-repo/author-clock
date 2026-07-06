@@ -1,7 +1,7 @@
 /* Author Clock service worker: offline cache-first app shell. */
 "use strict";
 
-var CACHE_NAME = "author-clock-v3";
+var CACHE_NAME = "author-clock-v4";
 var PRECACHE_URLS = [
   "./index.html",
   "assets/style.css",
@@ -41,21 +41,59 @@ self.addEventListener("activate", function (event) {
   self.clients.claim();
 });
 
-self.addEventListener("fetch", function (event) {
-  event.respondWith(
-    caches.match(event.request).then(function (cached) {
-      var network = caches.open(CACHE_NAME).then(function (cache) {
-        return fetch(event.request)
-          .then(function (response) {
-            cache.put(event.request, response.clone());
-            return response;
-          })
-          .catch(function () {
-            return cached;
-          });
+function isCacheFirstPath(pathname) {
+  return pathname.indexOf("/data/") !== -1 || pathname.indexOf("/assets/icons/") !== -1;
+}
+
+function networkFirst(event) {
+  return fetch(event.request)
+    .then(function (response) {
+      var copy = response.clone();
+      caches.open(CACHE_NAME).then(function (cache) {
+        cache.put(event.request, copy);
       });
-      event.waitUntil(network);
-      return cached || network;
+      return response;
     })
-  );
+    .catch(function () {
+      return caches.match(event.request).then(function (cached) {
+        if (cached) {
+          return cached;
+        }
+        if (event.request.mode === "navigate") {
+          return caches.match("./index.html");
+        }
+        return Promise.reject(new Error("network and cache both failed"));
+      });
+    });
+}
+
+function cacheFirst(event) {
+  return caches.match(event.request).then(function (cached) {
+    var network = fetch(event.request)
+      .then(function (response) {
+        caches.open(CACHE_NAME).then(function (cache) {
+          cache.put(event.request, response.clone());
+        });
+        return response;
+      })
+      .catch(function () {
+        return cached;
+      });
+    return cached || network;
+  });
+}
+
+self.addEventListener("fetch", function (event) {
+  var url = new URL(event.request.url);
+
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  if (event.request.mode === "navigate" || isCacheFirstPath(url.pathname) === false) {
+    event.respondWith(networkFirst(event));
+    return;
+  }
+
+  event.respondWith(cacheFirst(event));
 });

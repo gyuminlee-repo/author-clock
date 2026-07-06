@@ -108,6 +108,11 @@ body {
   transition: transform 2s ease;
 }
 
+/* Landscape split layout: hidden in portrait, activated below. */
+#big-clock {
+  display: none;
+}
+
 #controls {
   position: fixed;
   top: 1rem;
@@ -328,6 +333,50 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+@media (orientation: landscape) {
+  body {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 2rem;
+    padding: 1.25rem 2rem;
+  }
+
+  #digital-clock {
+    display: none;
+  }
+
+  #big-clock {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 0.6rem;
+    flex: 1 1 50%;
+    min-width: 0;
+    font-family: "AppleMyungjo", "Apple Myungjo", "Batang", "바탕", "Nanum Myeongjo", serif;
+    color: var(--fg);
+    user-select: none;
+    transition: transform 2s ease;
+  }
+
+  #big-clock .big-time {
+    font-size: clamp(2.4rem, 16vh, 6.5rem);
+    line-height: 1;
+    letter-spacing: 0.02em;
+  }
+
+  #big-clock .big-ampm {
+    font-size: clamp(1rem, 4vh, 1.6rem);
+    color: var(--muted);
+  }
+
+  #stage {
+    flex: 1 1 50%;
+    min-width: 0;
+    max-width: 46vw;
+  }
 }
 
 @media (max-width: 480px) {
