@@ -39,7 +39,17 @@ static void Lvgl_FlushCallback(lv_display_t *disp, const lv_area_t *area, uint8_
 }
 
 static void net_time_task(void *arg) {
-    net_time_sync();   // blocking; sets system time from NTP or RTC
+    // Retry until NTP succeeds: an always-on clock may boot with the router
+    // down and needs to sync whenever it comes back. Once synced, lwip SNTP
+    // keeps the clock refreshed, so the task exits. With no WIFI_SSID there is
+    // nothing to retry, so the single RTC-only pass ends the task too.
+    for (;;) {
+        if (net_time_sync())               // synced from NTP; SNTP takes over
+            break;
+        if (!net_time_wifi_configured())   // RTC-only, retrying is pointless
+            break;
+        vTaskDelay(pdMS_TO_TICKS(NET_TIME_RETRY_SEC * 1000));
+    }
     vTaskDelete(NULL);
 }
 

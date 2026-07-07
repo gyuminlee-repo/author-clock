@@ -60,35 +60,56 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     }
 }
 
+bool net_time_wifi_configured(void) {
+    return strlen(WIFI_SSID) != 0;
+}
+
 bool net_time_sync(void) {
-    if (strlen(WIFI_SSID) == 0) {
+    if (!net_time_wifi_configured()) {
         ESP_LOGW(TAG, "no WIFI_SSID configured; using RTC only");
         restore_from_rtc();
         return false;
     }
 
-    s_wifi_events = xEventGroupCreate();
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    // One-time bring-up. esp_netif_init/esp_event_loop_create_default/
+    // esp_wifi_init/handler registration/esp_wifi_start are not reentrant and
+    // abort under ESP_ERROR_CHECK if called twice, so guard them. A retry after
+    // a failed connect re-enters via the else branch: reset the retry counter,
+    // clear stale bits, and reconnect from esp_wifi_connect().
+    static bool s_wifi_inited = false;
+    if (!s_wifi_inited) {
+        s_wifi_events = xEventGroupCreate();
+        ESP_ERROR_CHECK(esp_netif_init());
+        esp_err_t loop_err = esp_event_loop_create_default();
+        if (loop_err != ESP_OK && loop_err != ESP_ERR_INVALID_STATE) {
+            ESP_ERROR_CHECK(loop_err);
+        }
+        esp_netif_create_default_wifi_sta();
 
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    esp_event_handler_instance_t any_id, got_ip;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                                        &wifi_event_handler, NULL, &any_id));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                                        &wifi_event_handler, NULL, &got_ip));
+        esp_event_handler_instance_t any_id, got_ip;
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                                            &wifi_event_handler, NULL, &any_id));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                                            &wifi_event_handler, NULL, &got_ip));
 
-    wifi_config_t wcfg = {};
-    strncpy((char *)wcfg.sta.ssid, WIFI_SSID, sizeof(wcfg.sta.ssid) - 1);
-    strncpy((char *)wcfg.sta.password, WIFI_PASSWORD, sizeof(wcfg.sta.password) - 1);
-    wcfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        wifi_config_t wcfg = {};
+        strncpy((char *)wcfg.sta.ssid, WIFI_SSID, sizeof(wcfg.sta.ssid) - 1);
+        strncpy((char *)wcfg.sta.password, WIFI_PASSWORD, sizeof(wcfg.sta.password) - 1);
+        wcfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wcfg));
-    ESP_ERROR_CHECK(esp_wifi_start());
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wcfg));
+        ESP_ERROR_CHECK(esp_wifi_start());   // STA_START handler calls esp_wifi_connect()
+        s_wifi_inited = true;
+    } else {
+        s_retry = 0;
+        xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+        ESP_LOGI(TAG, "retrying wifi connect");
+        esp_wifi_connect();
+    }
 
     EventBits_t bits = xEventGroupWaitBits(s_wifi_events,
                                            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
@@ -99,10 +120,16 @@ bool net_time_sync(void) {
         return false;
     }
 
-    // SNTP
-    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, "pool.ntp.org");
-    esp_sntp_init();
+    // SNTP: init once, then let lwip keep polling. A retry that got past the
+    // WiFi step but timed out on SNTP re-enters here with SNTP already running,
+    // so guard the one-time setup instead of re-initializing it.
+    static bool s_sntp_inited = false;
+    if (!s_sntp_inited) {
+        esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, "pool.ntp.org");
+        esp_sntp_init();
+        s_sntp_inited = true;
+    }
 
     int wait = 0;
     while (esp_sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED && wait < 15) {
