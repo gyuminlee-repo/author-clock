@@ -13,7 +13,9 @@
 extern "C" {
 extern const lv_font_t font_digits_96;   // 0-9 and ':' only, big clock
 extern const lv_font_t font_ko_44;       // calendar header / fallback
-extern const lv_font_t font_ko_28;       // quote body + source
+extern const lv_font_t font_ko_28;       // quote body (largest) + source
+extern const lv_font_t font_ko_22;       // quote body auto-fit step
+extern const lv_font_t font_ko_18;       // quote body auto-fit step (smallest)
 extern const lv_image_dsc_t cat_icon;     // top-right cat face, 72x72
 extern const lv_image_dsc_t cat_icon_48;  // calendar top-right, 48x48
 }
@@ -38,6 +40,56 @@ static lv_obj_t *cal_cell[42];
 static const char *WDAY_KO[7] = { "일", "월", "화", "수", "목", "금", "토" };
 
 static bool showing_calendar = false;
+
+// Clock-screen quote layout, two modes re-evaluated on every quote change:
+//
+// Normal: 96px time + expression chip; quote box sits between the chip and
+//   the 28px source label. Ladder 28 -> 22 -> 18 px must fit ~84px.
+// Compact (long quotes): time shrinks to font_ko_44 at the top, the chip is
+//   hidden (the expression is contained in the full quote text; longest chip
+//   is 20 chars and cannot share the top row), the source label drops to
+//   18px, and the quote box grows to ~217px. Ladder 22 -> 18 px. 18px
+//   overflow beyond even the compact box falls back to dot-truncation.
+static const int32_t QUOTE_W = 380;
+
+// Normal mode: source font_ko_28 (line_height 29) at BOTTOM_MID -6.
+static const int32_t QUOTE_TOP_N = 178;
+static const int32_t QUOTE_BOT_N = LCD_HEIGHT - 6 - 29 - 3;     // 262
+static const int32_t QUOTE_H_N   = QUOTE_BOT_N - QUOTE_TOP_N;   // 84
+
+// Compact mode: time font_ko_44 (line_height 45) at y=8 ends at 53;
+// source font_ko_18 (line_height 19) at BOTTOM_MID -4 starts at 277.
+static const int32_t QUOTE_TOP_C = 58;
+static const int32_t QUOTE_BOT_C = LCD_HEIGHT - 4 - 19 - 2;     // 275
+static const int32_t QUOTE_H_C   = QUOTE_BOT_C - QUOTE_TOP_C;   // 217
+
+// Auto-fit ladders, largest first.
+static const lv_font_t *const QUOTE_FONTS_N[] = { &font_ko_28, &font_ko_22, &font_ko_18 };
+static const int QUOTE_FONT_N_CNT = 3;
+static const lv_font_t *const QUOTE_FONTS_C[] = { &font_ko_22, &font_ko_18 };
+static const int QUOTE_FONT_C_CNT = 2;
+
+// Move the time / quote / source widgets between the two layouts. The chip
+// visibility is handled by ui_set_quote (hidden whenever compact).
+static void apply_clock_layout(bool compact) {
+    if (compact) {
+        // 44px "00:00" is ~130px wide centered (x ~135-265), clear of the
+        // 72x72 cat icon at x >= 322, so the icon stays as-is.
+        lv_obj_set_style_text_font(lbl_time, &font_ko_44, 0);
+        lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 8);
+        lv_obj_set_height(lbl_quote, QUOTE_H_C);
+        lv_obj_align(lbl_quote, LV_ALIGN_TOP_MID, 0, QUOTE_TOP_C);
+        lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
+        lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -4);
+    } else {
+        lv_obj_set_style_text_font(lbl_time, &font_digits_96, 0);
+        lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, -14, 20);
+        lv_obj_set_height(lbl_quote, QUOTE_H_N);
+        lv_obj_align(lbl_quote, LV_ALIGN_TOP_MID, 0, QUOTE_TOP_N);
+        lv_obj_set_style_text_font(lbl_source, &font_ko_28, 0);
+        lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -6);
+    }
+}
 
 static void style_screen_white(lv_obj_t *scr) {
     lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
@@ -76,16 +128,20 @@ static void build_clock_screen(void) {
     lv_label_set_text(lbl_hl, "");
     lv_obj_align(lbl_hl, LV_ALIGN_TOP_MID, 0, 140);
 
-    // Quote body: secondary, wraps, truncates with dots if too long.
+    // Quote body: full text via auto-fit font (see ui_set_quote). Fixed box so
+    // measurement and layout agree. letter/line space pinned to 0 so the
+    // lv_text_get_size() fit check matches what the label actually renders.
     lbl_quote = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_quote, &font_ko_28, 0);
     lv_obj_set_style_text_color(lbl_quote, lv_color_black(), 0);
-    lv_label_set_long_mode(lbl_quote, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(lbl_quote, 380);
-    lv_obj_set_height(lbl_quote, 90);
+    lv_obj_set_style_text_letter_space(lbl_quote, 0, 0);
+    lv_obj_set_style_text_line_space(lbl_quote, 0, 0);
+    lv_label_set_long_mode(lbl_quote, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(lbl_quote, QUOTE_W);
+    lv_obj_set_height(lbl_quote, QUOTE_H_N);
     lv_obj_set_style_text_align(lbl_quote, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(lbl_quote, "");
-    lv_obj_align(lbl_quote, LV_ALIGN_TOP_MID, 0, 178);
+    lv_obj_align(lbl_quote, LV_ALIGN_TOP_MID, 0, QUOTE_TOP_N);
 
     // Source: smallest, at the very bottom.
     lbl_source = lv_label_create(scr_clock);
@@ -106,19 +162,50 @@ void ui_set_time_text(int hour, int minute) {
 
 void ui_set_quote(const quote_t *q) {
     if (!q || !q->q || q->q[0] == '\0') {
+        apply_clock_layout(false);
         lv_obj_add_flag(lbl_hl, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(lbl_quote, "");
         lv_label_set_text(lbl_source, "");
         return;
     }
 
-    if (q->t && q->t[0] != '\0') {
+    // Auto-fit, re-evaluated per quote: try the normal box (big time + chip)
+    // with 28 -> 22 -> 18px; if none fit, switch to the compact layout (44px
+    // time, no chip, bigger box) with 22 -> 18px. Dot-truncate only if the
+    // quote overflows even the compact box at 18px.
+    const lv_font_t *chosen = NULL;
+    bool compact = false;
+    bool overflow = false;
+    for (int i = 0; i < QUOTE_FONT_N_CNT; i++) {
+        lv_point_t sz;
+        lv_text_get_size(&sz, q->q, QUOTE_FONTS_N[i], 0, 0, QUOTE_W, LV_TEXT_FLAG_NONE);
+        if (sz.y <= QUOTE_H_N) { chosen = QUOTE_FONTS_N[i]; break; }
+    }
+    if (!chosen) {
+        compact = true;
+        for (int i = 0; i < QUOTE_FONT_C_CNT; i++) {
+            lv_point_t sz;
+            lv_text_get_size(&sz, q->q, QUOTE_FONTS_C[i], 0, 0, QUOTE_W, LV_TEXT_FLAG_NONE);
+            if (sz.y <= QUOTE_H_C) { chosen = QUOTE_FONTS_C[i]; break; }
+        }
+        if (!chosen) {   // safety net, arithmetically unreachable with data
+            chosen = QUOTE_FONTS_C[QUOTE_FONT_C_CNT - 1];
+            overflow = true;
+        }
+    }
+    apply_clock_layout(compact);
+
+    // Chip only in normal mode; compact mode trades it for quote space.
+    if (!compact && q->t && q->t[0] != '\0') {
         lv_label_set_text(lbl_hl, q->t);
         lv_obj_remove_flag(lbl_hl, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(lbl_hl, LV_OBJ_FLAG_HIDDEN);
     }
 
+    lv_obj_set_style_text_font(lbl_quote, chosen, 0);
+    lv_label_set_long_mode(lbl_quote,
+                           overflow ? LV_LABEL_LONG_DOT : LV_LABEL_LONG_WRAP);
     lv_label_set_text(lbl_quote, q->q);
 
     char src[160];

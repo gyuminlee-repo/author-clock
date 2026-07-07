@@ -14,12 +14,12 @@ set(app_srcs
 
 # Font C arrays are tools/build_fonts.sh output. Fail early with guidance
 # if they are missing so the build error is actionable.
-foreach(f font_ko_28.c font_ko_44.c font_digits_96.c quotes_data.c)
+foreach(f font_ko_28.c font_ko_22.c font_ko_18.c font_ko_44.c font_digits_96.c quotes_data.c)
     if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/${f}")
         list(APPEND app_srcs "${f}")
     else()
         message(FATAL_ERROR
-            "Missing generated font ${f}. Run: cd firmware/tools && python3 build_data.py && bash build_fonts.sh && python3 embed_quotes.py, then copy font_ko_28.c font_ko_44.c font_digits_96.c into firmware/main/")
+            "Missing generated font ${f}. Run: cd firmware/tools && python3 build_data.py && bash build_fonts.sh && python3 embed_quotes.py, then copy font_ko_28.c font_ko_22.c font_ko_18.c font_ko_44.c font_digits_96.c into firmware/main/")
     endif()
 endforeach()
 

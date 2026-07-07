@@ -45,6 +45,11 @@ open('hangul_symbols.txt','w',encoding='utf-8').write(''.join(non))
 # hangul/specials via --symbols.
 npx --yes lv_font_conv --font "$SUBSET_TTF" --size 28 --bpp 1 --format lvgl \
   --range 0x20-0x7E --symbols "$(cat hangul_symbols.txt)" -o font_ko_28.c
+# Smaller quote-body sizes for the clock-screen auto-fit ladder (28 -> 22 -> 18).
+npx --yes lv_font_conv --font "$SUBSET_TTF" --size 22 --bpp 1 --format lvgl \
+  --range 0x20-0x7E --symbols "$(cat hangul_symbols.txt)" -o font_ko_22.c
+npx --yes lv_font_conv --font "$SUBSET_TTF" --size 18 --bpp 1 --format lvgl \
+  --range 0x20-0x7E --symbols "$(cat hangul_symbols.txt)" -o font_ko_18.c
 npx --yes lv_font_conv --font "$SUBSET_TTF" --size 44 --bpp 1 --format lvgl \
   --range 0x20-0x7E --symbols "$(cat hangul_symbols.txt)" -o font_ko_44.c
 
@@ -52,5 +57,5 @@ npx --yes lv_font_conv --font "$SUBSET_TTF" --size 44 --bpp 1 --format lvgl \
 npx --yes lv_font_conv --font "$SUBSET_TTF" --size 96 --bpp 1 --format lvgl \
   --range 0x30-0x3A -o font_digits_96.c
 
-echo "done: $SUBSET_TTF, font_ko_28.c, font_ko_44.c, font_digits_96.c"
+echo "done: $SUBSET_TTF, font_ko_28.c, font_ko_22.c, font_ko_18.c, font_ko_44.c, font_digits_96.c"
 echo "copy the font_*.c files into ../main/ before running pio run"
