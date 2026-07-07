@@ -1,41 +1,87 @@
 # 작가시계 펌웨어 (ESP32-S3)
 
 콘센트에 꽂아두면 계속 켜지는 하드웨어 작가시계. 매분 그 시각에 해당하는 한국 문학
-문장을 컬러 LCD에 표시하고, 문장 속 시각 표현을 금색으로 강조한다.
+문장을 표시하고, 문장 속 시각 표현을 반전 블록(검정 배경 + 흰 글자)으로 강조한다.
 
 ## 대상 보드
 
-**JC3248W535** (ESP32-S3, 3.5인치 320x480 IPS 정전식 터치, 16MB 플래시 + 8MB PSRAM).
-동급 대체: Waveshare ESP32-S3 3.5" Touch LCD (N16R8), 기타 ESP32-S3 320x480 QSPI LCD 보드.
-전원: USB-C 5V 상시 급전 = 항상 켜짐(자동 절전/꺼짐 없음). 5V/1A 충전기면 충분.
+**Waveshare ESP32-S3-RLCD-4.2** (ESP32-S3-WROOM-1-N16R8, 16MB 플래시 + 8MB 옥탈 PSRAM).
+
+- 패널: ST7305, 4.2인치 모노 1bpp 반사형, 400x300 가로. 백라이트 없음(주변광 반사).
+- SPI: CLK=GPIO11, MOSI=GPIO12, DC=GPIO5, CS=GPIO40, RST=GPIO41, TE=GPIO6(옵션). 클럭 1MHz.
+- RTC: PCF85063 (I2C SDA=GPIO13, SCL=GPIO14).
+- 버튼: KEY=GPIO18 (active low). 짧게 누르면 시계 화면과 캘린더 화면을 전환.
+- 전원: USB-C 5V 상시 급전 = 항상 켜짐(자동 절전/꺼짐 없음). 반사형이라 소비 전력이 낮다.
+
+## 화면
+
+- 시계 화면: 상단~중앙에 대형 HH:MM 숫자(96px)가 주인공. 그 아래 인용문(28px, 자동 줄바꿈,
+  넘치면 말줄임), 최하단에 출처(작품 · 작가). 문장 속 시각 표현은 반전 블록으로 강조. 우상단에
+  디더링 처리한 고양이 실사 아이콘(72x72) 상시 표시. 해당 분에 문장이 없으면 시각만 크게 표시.
+- 캘린더 화면: 상단 YYYY년 M월(44px), 요일 헤더(일~토), 6주 그리드. 오늘 날짜는 반전 블록.
+  우상단에 같은 고양이 아이콘(48x48) 표시.
 
 ## 왜 되는가 (실측)
 
 - 정확 시각 문장 데이터 `data/quotes_min.json` = 431KB (1440분, 1497개, 시간대 근사 문장 제외).
 - 데이터에 실제 쓰인 한글 1,275자뿐 -> subset 폰트가 작다.
-- LVGL 폰트(2bpp): 28px 1.06MB + 44px 1.88MB, subset TTF 498KB.
-- 합계 약 3.4MB -> 16MB 플래시에 여유. LVGL 버퍼는 8MB PSRAM 사용.
+- LVGL 폰트(1bpp): 28px, 44px, 그리고 숫자만 담은 96px(수 KB).
+- 인용문 데이터는 C 배열(tools/embed_quotes.py 생성)로 컴파일되며, LVGL 드로우 버퍼는 8MB PSRAM 사용.
 
-## 빌드 파이프라인 (보드 없이도 생성됨)
+## 빌드
+
+### 1. 데이터·폰트 생성 (보드 없이도 생성됨)
 
 ```bash
 cd firmware/tools
 python3 build_data.py      # -> ../data/quotes_min.json, ../data/glyphs.txt
-bash   build_fonts.sh      # OFL 나눔명조 받아 subset -> font_ko_28.c, font_ko_44.c
+python3 make_icon.py       # assets/cat_bayer_*.png -> ../main/cat_icon.c(72x72), cat_icon_48.c(48x48)
+bash   build_fonts.sh      # SIL OFL Pretendard subset -> font_ko_28.c, font_ko_44.c, font_digits_96.c
+cp font_ko_28.c font_ko_44.c font_digits_96.c ../main/
 ```
 
-생성물 중 원본 TTF와 대용량 `font_ko_*.c`는 gitignore(스크립트로 재생성). 데이터와
-`glyphs.txt`, subset 스크립트는 커밋된다.
+`build_data.py`, `make_icon.py`, `build_fonts.sh`는 커밋된다. 원본 TTF와 대용량
+`font_*.c`는 gitignore(스크립트로 재생성).
 
-## 펌웨어 (LVGL) 구성 예정
+### 2. WiFi 크리덴셜
 
-- 시간: NTP(WiFi) 또는 보드 RTC. 매분 경계에서 그 분의 문장 갱신.
-- 문장 선택: `quotes_min.json`을 LittleFS에서 로드, "HH:MM" 키로 조회. 그 분에 여러
-  개면 원문(kind=원문) 우선, 터치하면 다른 문장(2개 이상일 때).
-- 렌더: 문장 본문(28px) + 출처(작게) + 시각 표현 금색 강조. 긴 문장은 화면에 맞게
-  자동 축소 또는 페이지네이션.
-- 밝기: 주간/야간 백라이트 조절(PWM). 상시 켜둠, sleep 없음.
+```bash
+cp firmware/main/wifi_secrets.h.example firmware/main/wifi_secrets.h
+# wifi_secrets.h를 열어 SSID/PASSWORD 입력 (gitignore됨)
+```
+
+크리덴셜이 없거나 접속 실패 시 NTP를 건너뛰고 PCF85063 RTC 시각으로 계속 동작한다.
+
+### 3. 펌웨어 빌드·플래시 (PlatformIO + ESP-IDF)
+
+LVGL은 컴포넌트 레지스트리 대신 로컬 컴포넌트로 사용한다 (레지스트리 접속이 막힌
+네트워크에서도 빌드되도록). 최초 1회 클론:
+
+```bash
+cd firmware
+git clone --depth 1 --branch v9.4.0 https://github.com/lvgl/lvgl.git components/lvgl
+rm -f components/lvgl/idf_component.yml   # 레지스트리 재접속 방지
+python3 tools/embed_quotes.py             # 인용문 DB -> main/quotes_data.c
+```
+
+```bash
+cd firmware
+pio run -e rlcd42                 # 빌드
+pio run -e rlcd42 -t upload       # 플래시
+pio device monitor -b 115200      # 로그
+```
+
+## 동작
+
+- 부팅: NVS -> RTC 시각으로 시스템 시간 seed -> 인용문 로드 -> 디스플레이/LVGL/UI -> WiFi/NTP(비동기).
+- 시간 소스: NTP(WiFi) 성공 시 시스템 시간 갱신 + RTC 기록. 실패 시 RTC 시각 유지.
+- 갱신: 매초 HH:MM 숫자 갱신, 분 경계에서 그 분의 문장·캘린더 갱신.
+- 렌더: LVGL이 RGB565로 그린 뒤 flush 콜백에서 임계값(`< 0x7fff`)으로 흑백 변환, ST7305로 전송.
 
 ## 라이선스
 
-코드 MIT. 폰트는 나눔명조(SIL OFL). 인용문은 웹앱과 동일(공개저작 원문 + 번역).
+- 코드: MIT.
+- 폰트: Pretendard (SIL OFL 1.1).
+- 고양이 아이콘: Wikimedia Commons "A white persian cat" by Magnus Bråth,
+  CC BY-SA 2.0 를 1bpp Bayer 디더링 처리. 원본은 `assets/persian.jpg`.
+- 인용문: 웹앱과 동일(공개저작 원문 + 번역).
