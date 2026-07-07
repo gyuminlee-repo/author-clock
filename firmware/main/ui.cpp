@@ -197,7 +197,19 @@ void ui_set_quote(const quote_t *q) {
 
     // Chip only in normal mode; compact mode trades it for quote space.
     if (!compact && q->t && q->t[0] != '\0') {
+        // Long expressions would overflow the 400px panel (auto-sized label);
+        // clamp to a fixed width with dot-truncation only when needed.
+        lv_point_t tsz;
+        lv_text_get_size(&tsz, q->t, &font_ko_28, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        if (tsz.x > QUOTE_W - 16) {
+            lv_obj_set_width(lbl_hl, QUOTE_W);
+            lv_label_set_long_mode(lbl_hl, LV_LABEL_LONG_DOT);
+        } else {
+            lv_obj_set_width(lbl_hl, LV_SIZE_CONTENT);
+            lv_label_set_long_mode(lbl_hl, LV_LABEL_LONG_WRAP);
+        }
         lv_label_set_text(lbl_hl, q->t);
+        lv_obj_align(lbl_hl, LV_ALIGN_TOP_MID, 0, 140);
         lv_obj_remove_flag(lbl_hl, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(lbl_hl, LV_OBJ_FLAG_HIDDEN);

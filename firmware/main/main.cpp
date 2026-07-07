@@ -51,12 +51,16 @@ extern "C" void app_main(void) {
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
+    // Timezone first, unconditionally: every later time path (RTC seed, NTP,
+    // the render loop) must interpret wall time as KST even when RTC or WiFi
+    // fails, or the clock shows UTC.
+    setenv("TZ", "KST-9", 1);
+    tzset();
+
     // 2. RTC -> seed system time (KST). NTP task refines it later.
     if (pcf85063_init()) {
         struct tm t;
         if (rtc_get_time(&t)) {
-            setenv("TZ", "KST-9", 1);
-            tzset();
             time_t local = mktime(&t);
             struct timeval tv = { .tv_sec = local, .tv_usec = 0 };
             settimeofday(&tv, NULL);
@@ -89,9 +93,12 @@ extern "C" void app_main(void) {
         localtime_r(&now, &lt);
 
         if (Lvgl_lock(-1)) {
-            ui_set_time_text(lt.tm_hour, lt.tm_min);
+            // The clock face shows HH:MM only, so touch LVGL just once per
+            // minute: each label update repaints and pushes the whole panel
+            // over 1MHz SPI (~120ms), wasteful every second.
             if (lt.tm_min != last_min) {
                 last_min = lt.tm_min;
+                ui_set_time_text(lt.tm_hour, lt.tm_min);
                 quote_t q;
                 if (quote_for_minute(lt.tm_hour, lt.tm_min, &q))
                     ui_set_quote(&q);
