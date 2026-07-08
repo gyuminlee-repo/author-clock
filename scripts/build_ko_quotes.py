@@ -268,8 +268,21 @@ AM_CUE_RE = re.compile(r"새벽|아침|오전")
 PM_CUE_RE = re.compile(r"오후|저녁|초저녁|밤")
 
 
+# Tokens where HOUR_RE grabs a spurious "<n> 시": ASAP idiom (한시바삐), Chinese
+# poetry (한시/漢詩), verb endings (두시구/두시우), relief (한시름), and word-split
+# artifacts (모두 시세, 만한 시금치, 번화한 시가지, 독창이래두 시키세, 시신경,
+# 시체). Reject the candidate when one is present so a rebuild does not
+# reintroduce the entries cleaned out of the shipped data.
+FALSE_POSITIVE_RE = re.compile(
+    r"한시바삐|한시름|漢詩|한시\s*한문|한시\s*맛|한시\s*공부|한시와|"
+    r"두시구|두시우|알아\s*두시|시금치|시신경|시가지|시체|시세를|시키세|만한\s*시"
+)
+
+
 def extract_precise(sentence):
     """Return (rep_key, t_text, minute, ampm) or None."""
+    if FALSE_POSITIVE_RE.search(sentence):
+        return None
     m = HOUR_RE.search(sentence)
     if not m:
         return None
