@@ -1,0 +1,21 @@
+[package]
+name = "author-clock"
+version = "0.1.0"
+description = "AuthorClock desktop wrapper for the GitHub Pages site"
+edition = "2021"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+
+[[bin]]
+name = "author-clock"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
