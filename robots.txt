@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://gyuminlee-repo.github.io/author-clock/sitemap.xml
