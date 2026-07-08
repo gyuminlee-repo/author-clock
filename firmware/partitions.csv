@@ -1,0 +1,5 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# Single-app layout. Quotes are EMBEDded in the binary, so no data partition needed.
+nvs,      data, nvs,     ,        0x6000,
+phy_init, data, phy,     ,        0x1000,
+factory,  app,  factory, ,        6M,
