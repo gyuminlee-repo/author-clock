@@ -18,6 +18,10 @@ void ui_start_button_task(void);
 // Cheap per-second update: just the big HH:MM digits.
 void ui_set_time_text(int hour, int minute);
 
+// Per-minute update: swap the top-right sprite to the next one from the icon
+// pool shuffle bag. Call under the LVGL lock alongside the quote update.
+void ui_next_top_icon(void);
+
 // Per-minute update: quote body, source, and the inverted time-expression
 // highlight. Pass q = NULL when no quote exists for this minute (time only).
 void ui_set_quote(const quote_t *q);

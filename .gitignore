@@ -7,3 +7,8 @@ firmware/tools/*.ttf
 firmware/tools/font_ko_*.c
 firmware/tools/hangul_symbols.txt
 backup/
+
+# Icon pool: generated bank (may embed local third-party sprites) + IP drop folder
+firmware/main/icon_pool.c
+firmware/assets/pool_local/
+firmware/tools/__pycache__/

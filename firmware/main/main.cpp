@@ -161,6 +161,7 @@ extern "C" void app_main(void) {
                     ui_set_quote(&q);
                 else
                     ui_set_quote(NULL);
+                ui_next_top_icon();
                 ui_build_calendar(&lt);
             }
             Lvgl_unlock();
