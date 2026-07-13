@@ -19,7 +19,7 @@ OUT_JSON = os.path.join(HERE, "..", "data", "quotes_min.json")
 OUT_GLYPHS = os.path.join(HERE, "..", "data", "glyphs.txt")
 
 # UI strings the firmware renders, so their glyphs are in the subset too.
-UI_TEXT = "오전오후시분작가시계역원문저장공유설정밝기글자크기자동밝게어둡게거치모드전체화면0123456789:· ()\"'…"
+UI_TEXT = "오전오후시분작가시계역원문저장공유설정밝기글자크기자동밝게어둡게거치모드전체화면0123456789:· ()\"'…%°C."
 
 
 def load_web_dataset(path):

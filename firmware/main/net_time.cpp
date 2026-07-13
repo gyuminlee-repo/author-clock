@@ -29,6 +29,10 @@ static EventGroupHandle_t s_wifi_events;
 #define WIFI_MAX_RETRY     6
 static int s_retry = 0;
 
+// Set once esp_wifi_start has run, so net_time_shutdown knows whether there is
+// a radio to stop (the no-SSID path never starts it).
+static bool s_wifi_started = false;
+
 static void restore_from_rtc(void) {
     struct tm t;
     if (rtc_get_time(&t)) {
@@ -62,6 +66,17 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
 
 bool net_time_wifi_configured(void) {
     return strlen(WIFI_SSID) != 0;
+}
+
+void net_time_shutdown(void) {
+    if (!s_wifi_started) return;   // radio never came up; nothing to stop
+    esp_err_t err = esp_wifi_stop();
+    if (err == ESP_OK) {
+        s_wifi_started = false;
+        ESP_LOGI(TAG, "WiFi stopped; radio off after NTP window");
+    } else {
+        ESP_LOGW(TAG, "esp_wifi_stop failed: %s", esp_err_to_name(err));
+    }
 }
 
 bool net_time_sync(void) {
@@ -104,6 +119,7 @@ bool net_time_sync(void) {
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wcfg));
         ESP_ERROR_CHECK(esp_wifi_start());   // STA_START handler calls esp_wifi_connect()
         s_wifi_inited = true;
+        s_wifi_started = true;
     } else {
         s_retry = 0;
         xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
@@ -126,13 +142,17 @@ bool net_time_sync(void) {
     static bool s_sntp_inited = false;
     if (!s_sntp_inited) {
         esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
-        esp_sntp_setservername(0, "pool.ntp.org");
+        // Phone hotspots often fail to resolve or route pool.ntp.org; list
+        // several widely-reachable servers so any one succeeding syncs time.
+        esp_sntp_setservername(0, "time.google.com");
+        esp_sntp_setservername(1, "time.cloudflare.com");
+        esp_sntp_setservername(2, "kr.pool.ntp.org");
         esp_sntp_init();
         s_sntp_inited = true;
     }
 
     int wait = 0;
-    while (esp_sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED && wait < 15) {
+    while (esp_sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED && wait < 25) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         wait++;
     }

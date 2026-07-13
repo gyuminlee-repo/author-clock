@@ -25,6 +25,11 @@ void ui_set_quote(const quote_t *q);
 // Rebuild the calendar grid for the given month, marking today.
 void ui_build_calendar(const struct tm *now);
 
+// Update the top-left temperature/humidity readout on the clock screen.
+// temp_c in deg C (one decimal shown), humi_pct in %RH (integer shown). Pass
+// NaN for either value on a failed sensor read to hide both icons and labels.
+void ui_set_env(float temp_c, float humi_pct);
+
 #ifdef __cplusplus
 }
 #endif
