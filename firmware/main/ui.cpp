@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <freertos/FreeRTOS.h>
@@ -6,9 +7,11 @@
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
 #include "lvgl.h"
 #include "lvgl_port.h"
 #include "ui.h"
+#include "icon_pool.h"
 #include "user_config.h"
 
 // Fonts and icon are compiled into the binary (see main/CMakeLists.txt).
@@ -35,6 +38,7 @@ static lv_obj_t *scr_cal;
 
 // Clock widgets
 static lv_obj_t *lbl_time;      // big HH:MM
+static lv_obj_t *top_icon;      // top-right pool sprite, one per minute
 static lv_obj_t *canvas_quote;  // quote body, drawn with inline inverted highlight
 static uint8_t  *canvas_buf;    // RGB565 canvas backing buffer (PSRAM)
 static lv_obj_t *lbl_source;    // work + author
@@ -305,12 +309,14 @@ static void build_clock_screen(void) {
     scr_clock = lv_obj_create(NULL);
     style_screen_white(scr_clock);
 
-    // Cat icon (72x72 dithered), top-right, always on.
-    lv_obj_t *icon = lv_image_create(scr_clock);
-    lv_image_set_src(icon, &cat_icon);
-    lv_obj_set_style_image_recolor(icon, lv_color_black(), 0);
-    lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
-    lv_obj_set_pos(icon, LCD_WIDTH - 72 - 6, 6);
+    // Top-right pool sprite (72x72), recolored black, one per minute via the
+    // shuffle bag in ui_next_top_icon. The cat is only the boot placeholder
+    // shown for the ~1s before the first minute tick swaps in a pool sprite.
+    top_icon = lv_image_create(scr_clock);
+    lv_image_set_src(top_icon, &cat_icon);
+    lv_obj_set_style_image_recolor(top_icon, lv_color_black(), 0);
+    lv_obj_set_style_image_recolor_opa(top_icon, LV_OPA_COVER, 0);
+    lv_obj_set_pos(top_icon, LCD_WIDTH - 72 - 6, 6);
 
     // Top-left environment readout, mirroring the top-right cat icon. Three
     // rows of [20x20 icon at x=6] + [font_ko_18 value at x=30], battery on top:
@@ -442,6 +448,41 @@ void ui_set_time_text(int hour, int minute) {
     char buf[6];
     snprintf(buf, sizeof(buf), "%02d:%02d", hour, minute);
     lv_label_set_text(lbl_time, buf);
+}
+
+// Shuffle bag over the icon pool: deal the pool in a random order, one sprite
+// per minute, and only reshuffle once every sprite has been shown. This makes
+// each sprite reappear at a fixed spacing of exactly icon_pool_count minutes,
+// so nothing repeats at short intervals (unlike plain random draws). Across a
+// reshuffle the first of the new bag is kept different from the last shown.
+static uint16_t *s_bag = NULL;
+static int s_bag_pos = 0;
+static int s_last_idx = -1;
+
+static void reshuffle_bag(void) {
+    int n = icon_pool_count;
+    for (int i = 0; i < n; i++) s_bag[i] = (uint16_t)i;
+    for (int i = n - 1; i > 0; i--) {          // Fisher-Yates
+        int j = (int)(esp_random() % (uint32_t)(i + 1));
+        uint16_t t = s_bag[i]; s_bag[i] = s_bag[j]; s_bag[j] = t;
+    }
+    if (n > 1 && s_bag[0] == s_last_idx) {     // avoid back-to-back repeat
+        uint16_t t = s_bag[0]; s_bag[0] = s_bag[1]; s_bag[1] = t;
+    }
+    s_bag_pos = 0;
+}
+
+// Advance to the next pool sprite. Call under the LVGL lock, once per minute.
+void ui_next_top_icon(void) {
+    if (icon_pool_count <= 0 || !top_icon) return;
+    if (!s_bag) {
+        s_bag = (uint16_t *)malloc(sizeof(uint16_t) * icon_pool_count);
+        if (!s_bag) return;                    // stay on the boot placeholder
+        reshuffle_bag();
+    }
+    if (s_bag_pos >= icon_pool_count) reshuffle_bag();
+    s_last_idx = s_bag[s_bag_pos++];
+    lv_image_set_src(top_icon, icon_pool[s_last_idx]);
 }
 
 void ui_set_quote(const quote_t *q) {
