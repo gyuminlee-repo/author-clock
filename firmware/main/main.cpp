@@ -1,15 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <time.h>
 #include <sys/time.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nvs_flash.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 
 #include "display_st7305.h"
 #include "lvgl_port.h"
 #include "rtc_pcf85063.h"
+#include "shtc3.h"
 #include "quote_store.h"
 #include "net_time.h"
 #include "ui.h"
@@ -39,17 +42,24 @@ static void Lvgl_FlushCallback(lv_display_t *disp, const lv_area_t *area, uint8_
 }
 
 static void net_time_task(void *arg) {
-    // Retry until NTP succeeds: an always-on clock may boot with the router
-    // down and needs to sync whenever it comes back. Once synced, lwip SNTP
-    // keeps the clock refreshed, so the task exits. With no WIFI_SSID there is
-    // nothing to retry, so the single RTC-only pass ends the task too.
-    for (;;) {
-        if (net_time_sync())               // synced from NTP; SNTP takes over
-            break;
+    // Bounded NTP window: try for up to NET_TIME_MAX_TRY_SEC after boot. A
+    // successful sync ends the task early and leaves the radio up so lwip SNTP
+    // keeps the clock refreshed. If the window closes without a sync (or there
+    // is no WIFI_SSID to retry), stop the radio and end the task so an always-on
+    // desk clock does not hold WiFi up forever. Each net_time_sync call blocks
+    // up to ~45s, so a few attempts fit inside the window at 30s spacing.
+    int64_t start = esp_timer_get_time();
+    const int64_t budget_us = (int64_t)NET_TIME_MAX_TRY_SEC * 1000000;
+    while ((esp_timer_get_time() - start) < budget_us) {
+        if (net_time_sync()) {             // synced from NTP; SNTP takes over
+            vTaskDelete(NULL);
+            return;
+        }
         if (!net_time_wifi_configured())   // RTC-only, retrying is pointless
             break;
-        vTaskDelay(pdMS_TO_TICKS(NET_TIME_RETRY_SEC * 1000));
+        vTaskDelay(pdMS_TO_TICKS(30 * 1000));
     }
+    net_time_shutdown();                    // window closed or RTC-only: radio off
     vTaskDelete(NULL);
 }
 
@@ -69,6 +79,23 @@ extern "C" void app_main(void) {
 
     // 2. RTC -> seed system time (KST). NTP task refines it later.
     if (pcf85063_init()) {
+#ifdef AC_SET_RTC_EPOCH
+        // Build-time override: unconditionally set system + RTC time from the
+        // epoch baked in at compile time (a UTC unix epoch the build passes,
+        // e.g. `date +%s`). TZ is already KST-9, so localtime_r yields KST wall
+        // time and rtc_set_time stores it exactly as net_time.cpp's NTP-success
+        // path does. System time is set regardless; the RTC write is
+        // best-effort.
+        struct timeval tv = { .tv_sec = (time_t)AC_SET_RTC_EPOCH, .tv_usec = 0 };
+        settimeofday(&tv, NULL);
+        time_t forced = time(NULL);
+        struct tm flt;
+        localtime_r(&forced, &flt);
+        rtc_set_time(&flt);
+        ESP_LOGI(TAG, "RTC force-set from build epoch: %04d-%02d-%02d %02d:%02d:%02d",
+                 flt.tm_year + 1900, flt.tm_mon + 1, flt.tm_mday,
+                 flt.tm_hour, flt.tm_min, flt.tm_sec);
+#else
         struct tm t;
         if (rtc_get_time(&t)) {
             time_t local = mktime(&t);
@@ -76,6 +103,10 @@ extern "C" void app_main(void) {
             settimeofday(&tv, NULL);
             ESP_LOGI(TAG, "system time seeded from RTC");
         }
+#endif
+        // SHTC3 shares the RTC I2C bus, so init it only after the bus exists.
+        if (!shtc3_init())
+            ESP_LOGW(TAG, "SHTC3 init failed; env readout stays hidden");
     }
 
     // 3. Quote data (PSRAM)
@@ -95,8 +126,10 @@ extern "C" void app_main(void) {
     // 5. WiFi/NTP asynchronously (never blocks the clock).
     xTaskCreatePinnedToCore(net_time_task, "nettime", 5 * 1024, NULL, 4, NULL, 0);
 
-    // 6. Update loop: HH:MM every second, quote + calendar on minute change.
+    // 6. Update loop: HH:MM every second, quote + calendar on minute change,
+    // temperature/humidity every 30s.
     int last_min = -1;
+    int env_ticks = 30;   // 30 => fire the first env read on iteration 1
     for (;;) {
         time_t now = time(NULL);
         struct tm lt;
@@ -117,6 +150,23 @@ extern "C" void app_main(void) {
                 ui_build_calendar(&lt);
             }
             Lvgl_unlock();
+        }
+
+        // Environment readout every 30s. The SHTC3 measurement blocks ~70ms of
+        // I2C and needs no LVGL lock, so read it outside the lock; only the
+        // ui_set_env label update touches LVGL. A failed read passes NaN, which
+        // hides the readout until the next cycle recovers it.
+        if (++env_ticks >= 30) {
+            env_ticks = 0;
+            float tc = NAN, hp = NAN;
+            if (!shtc3_read(&tc, &hp)) {
+                tc = NAN;
+                hp = NAN;
+            }
+            if (Lvgl_lock(-1)) {
+                ui_set_env(tc, hp);
+                Lvgl_unlock();
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }

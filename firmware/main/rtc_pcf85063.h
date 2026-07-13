@@ -2,6 +2,7 @@
 
 #include <time.h>
 #include <stdbool.h>
+#include <driver/i2c_master.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,6 +23,11 @@ bool rtc_get_time(struct tm *out);
 
 // Write a struct tm to the RTC.
 bool rtc_set_time(const struct tm *in);
+
+// Handle of the shared I2C master bus created by pcf85063_init. The SHTC3
+// temperature/humidity sensor at 0x70 sits on the same bus and adds itself as
+// a second device. Returns NULL before pcf85063_init runs (or if it failed).
+i2c_master_bus_handle_t pcf85063_get_bus(void);
 
 #ifdef __cplusplus
 }

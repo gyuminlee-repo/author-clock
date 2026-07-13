@@ -5,11 +5,13 @@ set(app_srcs
     "display_st7305.cpp"
     "lvgl_port.cpp"
     "rtc_pcf85063.cpp"
+    "shtc3.cpp"
     "net_time.cpp"
     "quote_store.cpp"
     "ui.cpp"
     "cat_icon.c"
     "cat_icon_48.c"
+    "env_icons.c"
 )
 
 # Font C arrays are tools/build_fonts.sh output. Fail early with guidance

@@ -62,6 +62,12 @@ bool pcf85063_init(void) {
     return true;
 }
 
+i2c_master_bus_handle_t pcf85063_get_bus(void) {
+    // SHTC3 (0x70) shares this bus (SDA=13, SCL=14). Call after pcf85063_init;
+    // returns NULL if the bus was never created.
+    return s_bus;
+}
+
 bool rtc_get_time(struct tm *out) {
     if (!s_dev || !out) return false;
     uint8_t b[7];
