@@ -48,13 +48,25 @@ bool quote_for_minute(int hour, int minute, quote_t *out) {
     const cJSON *arr = cJSON_GetObjectItemCaseSensitive(s_root, key);
     if (!cJSON_IsArray(arr) || cJSON_GetArraySize(arr) == 0) return false;
 
+    // Pick the shortest quote for this minute: the fewer characters, the larger
+    // the auto-fit font and the less chance a long quote must shrink or clip.
+    // Ties break toward an original (k=0) over a translation.
     const cJSON *chosen = NULL;
+    size_t best_len = (size_t)-1;
+    int best_k = 2;
     const cJSON *e = NULL;
     cJSON_ArrayForEach(e, arr) {
+        const cJSON *qj = cJSON_GetObjectItemCaseSensitive(e, "q");
+        if (!cJSON_IsString(qj) || !qj->valuestring) continue;
+        size_t len = strlen(qj->valuestring);
         const cJSON *k = cJSON_GetObjectItemCaseSensitive(e, "k");
         int kv = cJSON_IsNumber(k) ? k->valueint : 1;
-        if (kv == 0) { chosen = e; break; }   // original preferred
-        if (!chosen) chosen = e;               // fallback: first entry
+        if (!chosen || len < best_len ||
+            (len == best_len && kv == 0 && best_k != 0)) {
+            chosen = e;
+            best_len = len;
+            best_k = kv;
+        }
     }
     if (!chosen) return false;
 
