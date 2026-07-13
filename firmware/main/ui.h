@@ -30,6 +30,18 @@ void ui_build_calendar(const struct tm *now);
 // NaN for either value on a failed sensor read to hide both icons and labels.
 void ui_set_env(float temp_c, float humi_pct);
 
+// Update the top-left battery readout, row 1 (top) of the environment block.
+// plugged=true (USB feeding, V>=4.2) shows the USB glyph alone and hides the
+// percent; plugged=false shows the battery glyph + percent (0..100 level).
+// valid=false (a failed ADC read) hides the row.
+void ui_set_battery(int percent, bool plugged, bool valid);
+
+// Bottom-center sync toast: a wifi icon + one-line status text on an opaque
+// white backing. ok => "시각 동기됨", else "동기 실패". Both calls take the
+// LVGL lock at the caller (main loop). Hidden until shown.
+void ui_show_sync_toast(bool ok);
+void ui_hide_sync_toast(void);
+
 #ifdef __cplusplus
 }
 #endif

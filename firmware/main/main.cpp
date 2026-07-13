@@ -13,6 +13,7 @@
 #include "lvgl_port.h"
 #include "rtc_pcf85063.h"
 #include "shtc3.h"
+#include "adc_battery.h"
 #include "quote_store.h"
 #include "net_time.h"
 #include "ui.h"
@@ -59,6 +60,9 @@ static void net_time_task(void *arg) {
             break;
         vTaskDelay(pdMS_TO_TICKS(30 * 1000));
     }
+    // Reached only when the window closed (or RTC-only broke out) without a
+    // sync; set_status keeps a real OK from being clobbered here.
+    net_time_set_fail();
     net_time_shutdown();                    // window closed or RTC-only: radio off
     vTaskDelete(NULL);
 }
@@ -109,6 +113,11 @@ extern "C" void app_main(void) {
             ESP_LOGW(TAG, "SHTC3 init failed; env readout stays hidden");
     }
 
+    // 2c. Battery ADC (independent of the I2C bus). Reads stay hidden if init
+    // fails, so this never blocks the clock.
+    if (!battery_init())
+        ESP_LOGW(TAG, "battery ADC init failed; battery readout stays hidden");
+
     // 3. Quote data (PSRAM)
     if (!quote_store_init()) {
         ESP_LOGE(TAG, "quote store init failed; time-only mode");
@@ -130,6 +139,11 @@ extern "C" void app_main(void) {
     // temperature/humidity every 30s.
     int last_min = -1;
     int env_ticks = 30;   // 30 => fire the first env read on iteration 1
+    // Sync toast latch: show once on the first OK/FAIL transition, auto-hide
+    // after 4 ticks (~4s), then never again. tick counts loop iterations (1s).
+    int tick = 0;
+    int toast_shown_tick = -1;   // -1 until shown
+    bool toast_done = false;     // true after it has hidden (one-shot)
     for (;;) {
         time_t now = time(NULL);
         struct tm lt;
@@ -163,11 +177,45 @@ extern "C" void app_main(void) {
                 tc = NAN;
                 hp = NAN;
             }
+            // Battery ADC read shares the 30s cadence. Like the SHTC3 read it
+            // needs no LVGL lock (independent peripheral), so read it outside
+            // the lock and only the ui_set_battery label update touches LVGL. A
+            // failed read passes valid=false, which hides row 3 until recovery.
+            float bv = 0.0f;
+            int bpct = 0;
+            bool bplugged = false;
+            bool bok = battery_read(&bv, &bpct, &bplugged);
             if (Lvgl_lock(-1)) {
                 ui_set_env(tc, hp);
+                ui_set_battery(bpct, bplugged, bok);
                 Lvgl_unlock();
             }
         }
+
+        // Sync toast: poll the net_time state. On the first OK/FAIL transition
+        // show it and stamp the tick; 4 ticks later hide it and latch off so it
+        // shows exactly once. UI calls take the LVGL lock like the rest of the
+        // loop.
+        if (!toast_done) {
+            net_sync_state_t st = net_time_get_status();
+            if (toast_shown_tick < 0) {
+                if (st == NET_SYNC_OK || st == NET_SYNC_FAIL) {
+                    if (Lvgl_lock(-1)) {
+                        ui_show_sync_toast(st == NET_SYNC_OK);
+                        Lvgl_unlock();
+                    }
+                    toast_shown_tick = tick;
+                }
+            } else if (tick - toast_shown_tick >= 4) {
+                if (Lvgl_lock(-1)) {
+                    ui_hide_sync_toast();
+                    Lvgl_unlock();
+                }
+                toast_done = true;
+            }
+        }
+
+        tick++;
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
