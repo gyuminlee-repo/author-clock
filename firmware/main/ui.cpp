@@ -520,7 +520,9 @@ void ui_set_env(float temp_c, float humi_pct) {
     // The font subset has no degree sign (U+00B0), so the thermometer icon
     // Font now carries degree + percent glyphs, so show explicit units.
     char t[16], h[16];
-    snprintf(t, sizeof(t), "%.1f°C", temp_c);
+    // Integer temperature ("23°C"): the decimal form ("23.4°C") reached ~x96,
+    // past the 96px clock's left edge (~x87), so the two overlapped.
+    snprintf(t, sizeof(t), "%.0f°C", temp_c);
     snprintf(h, sizeof(h), "%.0f%%", humi_pct);
     lv_label_set_text(lbl_temp, t);
     lv_label_set_text(lbl_humi, h);
