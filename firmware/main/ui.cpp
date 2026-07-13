@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <driver/gpio.h>
@@ -19,6 +20,8 @@ extern const lv_font_t font_ko_22;       // quote body auto-fit step
 extern const lv_font_t font_ko_18;       // quote body auto-fit step (smallest)
 extern const lv_image_dsc_t cat_icon;     // top-right cat face, 72x72
 extern const lv_image_dsc_t cat_icon_48;  // calendar top-right, 48x48
+extern const lv_image_dsc_t therm_icon;   // top-left temperature glyph, 20x20
+extern const lv_image_dsc_t drop_icon;    // top-left humidity glyph, 20x20
 }
 
 static const char *TAG = "UI";
@@ -32,6 +35,12 @@ static lv_obj_t *lbl_time;      // big HH:MM
 static lv_obj_t *canvas_quote;  // quote body, drawn with inline inverted highlight
 static uint8_t  *canvas_buf;    // RGB565 canvas backing buffer (PSRAM)
 static lv_obj_t *lbl_source;    // work + author
+
+// Top-left environment readout (mirrors the top-right cat icon).
+static lv_obj_t *therm_img;     // thermometer glyph, row 1
+static lv_obj_t *lbl_temp;      // temperature value, row 1
+static lv_obj_t *drop_img;      // water-drop glyph, row 2
+static lv_obj_t *lbl_humi;      // humidity value, row 2
 
 // Calendar widgets
 static lv_obj_t *lbl_cal_head;
@@ -60,11 +69,14 @@ static const int32_t QUOTE_W  = 380;
 static const int32_t CANVAS_W = 380;
 static const int32_t CANVAS_H = 217;
 
-// Normal mode: source font_ko_28 (line_height 29) at BOTTOM_MID -6. Chip gone,
-// so the quote box grows upward (top 178 -> 150).
-static const int32_t QUOTE_TOP_N = 150;
-static const int32_t QUOTE_BOT_N = LCD_HEIGHT - 6 - 29 - 3;     // 262
-static const int32_t QUOTE_H_N   = QUOTE_BOT_N - QUOTE_TOP_N;   // 112
+// Normal mode: source is now always font_ko_18 (line_height 19) at BOTTOM_MID
+// -6, so the quote box reclaims the space the old 28px source used and grows
+// downward (bottom 262 -> 272). It also grows upward: the gap under the 96px
+// clock (glyph bottom ~120) was halved, so the box top moved 150 -> 132. The
+// wider box lets the auto-fit ladder pick larger fonts more often.
+static const int32_t QUOTE_TOP_N = 132;
+static const int32_t QUOTE_BOT_N = LCD_HEIGHT - 6 - 19 - 3;     // 272
+static const int32_t QUOTE_H_N   = QUOTE_BOT_N - QUOTE_TOP_N;   // 140
 
 // Compact mode: time font_ko_44 (line_height 45) at y=8 ends at 53;
 // source font_ko_18 (line_height 19) at BOTTOM_MID -4 starts at 277.
@@ -220,10 +232,15 @@ static void apply_clock_layout(bool compact) {
         lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
         lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -4);
     } else {
+        // 96px "00:00" (~225px max) centered: left/right margins ~88px each,
+        // clearing the top-left env block (ends x84) and the top-right 72px cat
+        // icon. The old -14 nudge is gone now that both corners are balanced.
         lv_obj_set_style_text_font(lbl_time, &font_digits_96, 0);
-        lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, -14, 20);
+        lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 20);
         lv_obj_align(canvas_quote, LV_ALIGN_TOP_MID, 0, QUOTE_TOP_N);
-        lv_obj_set_style_text_font(lbl_source, &font_ko_28, 0);
+        // Source is always the smallest font so it never looks larger than an
+        // auto-fit-shrunk quote body.
+        lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
         lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -6);
     }
 }
@@ -246,13 +263,50 @@ static void build_clock_screen(void) {
     lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
     lv_obj_set_pos(icon, LCD_WIDTH - 72 - 6, 6);
 
-    // Big time: the star of the screen (~40% of height).
+    // Top-left environment readout, mirroring the top-right cat icon. Two rows
+    // of [20x20 icon at x=6] + [font_ko_18 value at x=30]:
+    //   row 1 y=8..28   thermometer + temperature ("23.4")
+    //   row 2 y=30..50  water drop  + humidity    ("45%")
+    // The block spans x 6..84, y 8..52. Overlap check: the centered 96px clock
+    // has a left edge near x88 (clear), the normal quote canvas starts at
+    // QUOTE_TOP_N=132 (clear), and the compact quote canvas starts at
+    // QUOTE_TOP_C=58 (6px below the block's y52 bottom). Hidden until the first
+    // successful sensor read; ui_set_env toggles visibility.
+    therm_img = lv_image_create(scr_clock);
+    lv_image_set_src(therm_img, &therm_icon);
+    lv_obj_set_style_image_recolor(therm_img, lv_color_black(), 0);
+    lv_obj_set_style_image_recolor_opa(therm_img, LV_OPA_COVER, 0);
+    lv_obj_set_pos(therm_img, 6, 8);
+    lv_obj_add_flag(therm_img, LV_OBJ_FLAG_HIDDEN);
+
+    lbl_temp = lv_label_create(scr_clock);
+    lv_obj_set_style_text_font(lbl_temp, &font_ko_18, 0);
+    lv_obj_set_style_text_color(lbl_temp, lv_color_black(), 0);
+    lv_label_set_text(lbl_temp, "");
+    lv_obj_set_pos(lbl_temp, 30, 9);
+    lv_obj_add_flag(lbl_temp, LV_OBJ_FLAG_HIDDEN);
+
+    drop_img = lv_image_create(scr_clock);
+    lv_image_set_src(drop_img, &drop_icon);
+    lv_obj_set_style_image_recolor(drop_img, lv_color_black(), 0);
+    lv_obj_set_style_image_recolor_opa(drop_img, LV_OPA_COVER, 0);
+    lv_obj_set_pos(drop_img, 6, 30);
+    lv_obj_add_flag(drop_img, LV_OBJ_FLAG_HIDDEN);
+
+    lbl_humi = lv_label_create(scr_clock);
+    lv_obj_set_style_text_font(lbl_humi, &font_ko_18, 0);
+    lv_obj_set_style_text_color(lbl_humi, lv_color_black(), 0);
+    lv_label_set_text(lbl_humi, "");
+    lv_obj_set_pos(lbl_humi, 30, 31);
+    lv_obj_add_flag(lbl_humi, LV_OBJ_FLAG_HIDDEN);
+
+    // Big time: the star of the screen (~40% of height). Centered now that the
+    // top-left env block and top-right cat icon balance the corners.
     lbl_time = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_time, &font_digits_96, 0);
     lv_obj_set_style_text_color(lbl_time, lv_color_black(), 0);
     lv_label_set_text(lbl_time, "00:00");
-    // Nudged 14px left of center to clear the larger 72x72 cat icon.
-    lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, -14, 20);
+    lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 20);
 
     // Quote canvas: one fixed RGB565 canvas (compact box size). Auto-fit font
     // and inline highlight are handled per quote in ui_set_quote. Created
@@ -269,9 +323,10 @@ static void build_clock_screen(void) {
     }
     lv_obj_align(canvas_quote, LV_ALIGN_TOP_MID, 0, QUOTE_TOP_N);
 
-    // Source: smallest, at the very bottom.
+    // Source: smallest, at the very bottom. Always font_ko_18 (see layout note)
+    // so it never dwarfs an auto-fit-shrunk quote body.
     lbl_source = lv_label_create(scr_clock);
-    lv_obj_set_style_text_font(lbl_source, &font_ko_28, 0);
+    lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_source, lv_color_black(), 0);
     lv_label_set_long_mode(lbl_source, LV_LABEL_LONG_DOT);
     lv_obj_set_width(lbl_source, 380);
@@ -347,6 +402,29 @@ void ui_set_quote(const quote_t *q) {
     if (a[0] && w[0]) snprintf(src, sizeof(src), "%s  ·  %s", a, w);
     else              snprintf(src, sizeof(src), "%s%s", a, w);
     lv_label_set_text(lbl_source, src);
+}
+
+void ui_set_env(float temp_c, float humi_pct) {
+    // A failed read (NaN) hides the whole block rather than showing stale or
+    // garbage numbers.
+    if (isnan(temp_c) || isnan(humi_pct)) {
+        lv_obj_add_flag(therm_img, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(lbl_temp,  LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(drop_img,  LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(lbl_humi,  LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    // The font subset has no degree sign (U+00B0), so the thermometer icon
+    // Font now carries degree + percent glyphs, so show explicit units.
+    char t[16], h[16];
+    snprintf(t, sizeof(t), "%.1f°C", temp_c);
+    snprintf(h, sizeof(h), "%.0f%%", humi_pct);
+    lv_label_set_text(lbl_temp, t);
+    lv_label_set_text(lbl_humi, h);
+    lv_obj_remove_flag(therm_img, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(lbl_temp,  LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(drop_img,  LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(lbl_humi,  LV_OBJ_FLAG_HIDDEN);
 }
 
 // ---- Calendar screen ------------------------------------------------------
