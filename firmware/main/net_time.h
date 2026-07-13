@@ -4,6 +4,24 @@
 extern "C" {
 #endif
 
+// Coarse NTP sync state, polled by the render loop to drive the on-screen
+// toast. Values are stored/read as a plain int (32-bit aligned, atomic on the
+// ESP32) since net_time_task (core 0) writes while the main loop reads.
+typedef enum {
+    NET_SYNC_NONE = 0,   // nothing attempted yet
+    NET_SYNC_TRYING,     // WiFi connect / SNTP in progress
+    NET_SYNC_OK,         // NTP synced and RTC updated
+    NET_SYNC_FAIL,       // window closed or unconfigured without a sync
+} net_sync_state_t;
+
+// Current sync state. Safe to call from any task; returns the latest value the
+// sync task published.
+net_sync_state_t net_time_get_status(void);
+
+// Publish NET_SYNC_FAIL from the sync task when its window closes without a
+// sync. No-op if an OK was already recorded, so a real sync is never masked.
+void net_time_set_fail(void);
+
 // Seconds a caller should wait before retrying net_time_sync() after a
 // transient failure (router down at boot, SNTP timeout). One hour keeps the
 // radio idle on an always-on desk clock while still recovering unattended.

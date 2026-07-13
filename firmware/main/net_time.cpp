@@ -33,6 +33,25 @@ static int s_retry = 0;
 // a radio to stop (the no-SSID path never starts it).
 static bool s_wifi_started = false;
 
+// Coarse sync state published for the UI toast. Written only from the sync
+// task, read from the main loop; a 32-bit int store is atomic on the ESP32.
+static volatile int s_status = NET_SYNC_NONE;
+
+// OK is terminal: once synced, the task self-deletes, so never let a later
+// FAIL (window close) clobber a real OK. TRYING/OK always overwrite.
+static void set_status(net_sync_state_t st) {
+    if (st == NET_SYNC_FAIL && s_status == NET_SYNC_OK) return;
+    s_status = (int)st;
+}
+
+net_sync_state_t net_time_get_status(void) {
+    return (net_sync_state_t)s_status;
+}
+
+void net_time_set_fail(void) {
+    set_status(NET_SYNC_FAIL);
+}
+
 static void restore_from_rtc(void) {
     struct tm t;
     if (rtc_get_time(&t)) {
@@ -85,6 +104,8 @@ bool net_time_sync(void) {
         restore_from_rtc();
         return false;
     }
+
+    set_status(NET_SYNC_TRYING);   // covers both first bring-up and the retry path
 
     // One-time bring-up. esp_netif_init/esp_event_loop_create_default/
     // esp_wifi_init/handler registration/esp_wifi_start are not reentrant and
@@ -174,5 +195,6 @@ bool net_time_sync(void) {
                  local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
                  local.tm_hour, local.tm_min, local.tm_sec);
     }
+    set_status(NET_SYNC_OK);
     return true;
 }

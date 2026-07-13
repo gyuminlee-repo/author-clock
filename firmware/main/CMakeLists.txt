@@ -6,6 +6,7 @@ set(app_srcs
     "lvgl_port.cpp"
     "rtc_pcf85063.cpp"
     "shtc3.cpp"
+    "adc_battery.cpp"
     "net_time.cpp"
     "quote_store.cpp"
     "ui.cpp"
@@ -28,5 +29,5 @@ endforeach()
 idf_component_register(
     SRCS ${app_srcs}
     INCLUDE_DIRS "."
-    REQUIRES esp_lcd driver esp_wifi esp_netif esp_timer nvs_flash json lvgl esp_common lwip
+    REQUIRES esp_lcd driver esp_adc esp_wifi esp_netif esp_timer nvs_flash json lvgl esp_common lwip
 )

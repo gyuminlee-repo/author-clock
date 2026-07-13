@@ -22,6 +22,9 @@ extern const lv_image_dsc_t cat_icon;     // top-right cat face, 72x72
 extern const lv_image_dsc_t cat_icon_48;  // calendar top-right, 48x48
 extern const lv_image_dsc_t therm_icon;   // top-left temperature glyph, 20x20
 extern const lv_image_dsc_t drop_icon;    // top-left humidity glyph, 20x20
+extern const lv_image_dsc_t batt_icon;    // top-left battery glyph, 20x20
+extern const lv_image_dsc_t usb_icon;     // top-left USB-plugged glyph, 20x20
+extern const lv_image_dsc_t wifi_icon;    // sync toast glyph, 20x20
 }
 
 static const char *TAG = "UI";
@@ -37,10 +40,17 @@ static uint8_t  *canvas_buf;    // RGB565 canvas backing buffer (PSRAM)
 static lv_obj_t *lbl_source;    // work + author
 
 // Top-left environment readout (mirrors the top-right cat icon).
-static lv_obj_t *therm_img;     // thermometer glyph, row 1
-static lv_obj_t *lbl_temp;      // temperature value, row 1
-static lv_obj_t *drop_img;      // water-drop glyph, row 2
-static lv_obj_t *lbl_humi;      // humidity value, row 2
+static lv_obj_t *batt_img;      // battery / USB glyph, row 1 (src swapped)
+static lv_obj_t *lbl_batt;      // battery percent value, row 1
+static lv_obj_t *therm_img;     // thermometer glyph, row 2
+static lv_obj_t *lbl_temp;      // temperature value, row 2
+static lv_obj_t *drop_img;      // water-drop glyph, row 3
+static lv_obj_t *lbl_humi;      // humidity value, row 3
+
+// Bottom-center NTP sync toast (opaque white pill: wifi icon + status text).
+static lv_obj_t *sync_toast;    // container, hidden until ui_show_sync_toast
+static lv_obj_t *wifi_img;      // wifi glyph, left
+static lv_obj_t *lbl_sync;      // status text, right
 
 // Calendar widgets
 static lv_obj_t *lbl_cal_head;
@@ -263,41 +273,63 @@ static void build_clock_screen(void) {
     lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
     lv_obj_set_pos(icon, LCD_WIDTH - 72 - 6, 6);
 
-    // Top-left environment readout, mirroring the top-right cat icon. Two rows
-    // of [20x20 icon at x=6] + [font_ko_18 value at x=30]:
-    //   row 1 y=8..28   thermometer + temperature ("23.4")
-    //   row 2 y=30..50  water drop  + humidity    ("45%")
-    // The block spans x 6..84, y 8..52. Overlap check: the centered 96px clock
-    // has a left edge near x88 (clear), the normal quote canvas starts at
-    // QUOTE_TOP_N=132 (clear), and the compact quote canvas starts at
-    // QUOTE_TOP_C=58 (6px below the block's y52 bottom). Hidden until the first
-    // successful sensor read; ui_set_env toggles visibility.
+    // Top-left environment readout, mirroring the top-right cat icon. Three
+    // rows of [20x20 icon at x=6] + [font_ko_18 value at x=30], battery on top:
+    //   row 1 y=8..28   battery/USB + charge %   ("83%")
+    //   row 2 y=30..50  thermometer + temperature ("23.4°C")
+    //   row 3 y=52..72  water drop  + humidity    ("45%")
+    // The block now spans x 6..84, y 8..72. Overlap check: the centered 96px
+    // clock has a left edge near x88 (clear), and the normal quote canvas
+    // starts at QUOTE_TOP_N=132 (clear). Compact mode is the exception: its
+    // quote canvas starts at QUOTE_TOP_C=58 and, being created after these env
+    // widgets, draws on top, so row 3 (humidity, y52..72) is occluded while a
+    // long quote is on screen. Three 20px rows from y8 cannot clear y58, so
+    // this is structural, not a coordinate nudge; it only affects long quotes.
+    // Row 1 hidden until the first battery read (ui_set_battery); rows 2-3
+    // until the first sensor read (ui_set_env).
+
+    // Row 1: battery. One image whose source is swapped between batt_icon and
+    // usb_icon in ui_set_battery, plus the percent label.
+    batt_img = lv_image_create(scr_clock);
+    lv_image_set_src(batt_img, &batt_icon);
+    lv_obj_set_style_image_recolor(batt_img, lv_color_black(), 0);
+    lv_obj_set_style_image_recolor_opa(batt_img, LV_OPA_COVER, 0);
+    lv_obj_set_pos(batt_img, 6, 8);
+    lv_obj_add_flag(batt_img, LV_OBJ_FLAG_HIDDEN);
+
+    lbl_batt = lv_label_create(scr_clock);
+    lv_obj_set_style_text_font(lbl_batt, &font_ko_18, 0);
+    lv_obj_set_style_text_color(lbl_batt, lv_color_black(), 0);
+    lv_label_set_text(lbl_batt, "");
+    lv_obj_set_pos(lbl_batt, 30, 9);
+    lv_obj_add_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
+
     therm_img = lv_image_create(scr_clock);
     lv_image_set_src(therm_img, &therm_icon);
     lv_obj_set_style_image_recolor(therm_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(therm_img, LV_OPA_COVER, 0);
-    lv_obj_set_pos(therm_img, 6, 8);
+    lv_obj_set_pos(therm_img, 6, 30);
     lv_obj_add_flag(therm_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_temp = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_temp, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_temp, lv_color_black(), 0);
     lv_label_set_text(lbl_temp, "");
-    lv_obj_set_pos(lbl_temp, 30, 9);
+    lv_obj_set_pos(lbl_temp, 30, 31);
     lv_obj_add_flag(lbl_temp, LV_OBJ_FLAG_HIDDEN);
 
     drop_img = lv_image_create(scr_clock);
     lv_image_set_src(drop_img, &drop_icon);
     lv_obj_set_style_image_recolor(drop_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(drop_img, LV_OPA_COVER, 0);
-    lv_obj_set_pos(drop_img, 6, 30);
+    lv_obj_set_pos(drop_img, 6, 52);
     lv_obj_add_flag(drop_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_humi = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_humi, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_humi, lv_color_black(), 0);
     lv_label_set_text(lbl_humi, "");
-    lv_obj_set_pos(lbl_humi, 30, 31);
+    lv_obj_set_pos(lbl_humi, 30, 53);
     lv_obj_add_flag(lbl_humi, LV_OBJ_FLAG_HIDDEN);
 
     // Big time: the star of the screen (~40% of height). Centered now that the
@@ -333,6 +365,38 @@ static void build_clock_screen(void) {
     lv_obj_set_style_text_align(lbl_source, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(lbl_source, "");
     lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -6);
+
+    // Sync toast: a wifi icon + one-line status text on an opaque white pill at
+    // BOTTOM_MID -32 (its 20px row spans screen y ~249..268). That band sits
+    // INSIDE the quote canvas' drawn box (normal reaches y272, compact y275),
+    // so an opaque white background is required to occlude any quote text under
+    // it for the toast' 4s life; a bare label/A8 icon would let text bleed
+    // through. It clears the source label (top ~y275) below and the top-left
+    // env block (y<=52) above. A flex row (LVGL9) centers icon + text and
+    // content-sizes the pill; created LAST so it draws over the canvas.
+    sync_toast = lv_obj_create(scr_clock);
+    lv_obj_set_style_bg_color(sync_toast, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(sync_toast, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(sync_toast, 0, 0);
+    lv_obj_set_style_pad_all(sync_toast, 4, 0);
+    lv_obj_set_style_pad_column(sync_toast, 4, 0);   // gap between icon and text
+    lv_obj_remove_flag(sync_toast, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(sync_toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(sync_toast, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(sync_toast, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_align(sync_toast, LV_ALIGN_BOTTOM_MID, 0, -32);
+    lv_obj_add_flag(sync_toast, LV_OBJ_FLAG_HIDDEN);
+
+    wifi_img = lv_image_create(sync_toast);
+    lv_image_set_src(wifi_img, &wifi_icon);
+    lv_obj_set_style_image_recolor(wifi_img, lv_color_black(), 0);
+    lv_obj_set_style_image_recolor_opa(wifi_img, LV_OPA_COVER, 0);
+
+    lbl_sync = lv_label_create(sync_toast);
+    lv_obj_set_style_text_font(lbl_sync, &font_ko_18, 0);
+    lv_obj_set_style_text_color(lbl_sync, lv_color_black(), 0);
+    lv_label_set_text(lbl_sync, "");
 }
 
 void ui_set_time_text(int hour, int minute) {
@@ -425,6 +489,42 @@ void ui_set_env(float temp_c, float humi_pct) {
     lv_obj_remove_flag(lbl_temp,  LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(drop_img,  LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(lbl_humi,  LV_OBJ_FLAG_HIDDEN);
+}
+
+void ui_set_battery(int percent, bool plugged, bool valid) {
+    // A failed ADC read (valid=false) hides row 1 rather than showing a stale
+    // or bogus level.
+    if (!valid) {
+        lv_obj_add_flag(batt_img,  LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(lbl_batt,  LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    if (plugged) {
+        // USB feeding (V>=4.2): show the USB glyph alone. The percent is
+        // meaningless while charging, so the label is cleared and hidden.
+        lv_image_set_src(batt_img, &usb_icon);
+        lv_label_set_text(lbl_batt, "");
+        lv_obj_add_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        // Discharging (3.0 <= V < 4.2): battery glyph + percent.
+        lv_image_set_src(batt_img, &batt_icon);
+        char b[16];
+        snprintf(b, sizeof(b), "%d%%", percent);
+        lv_label_set_text(lbl_batt, b);
+        lv_obj_remove_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_remove_flag(batt_img, LV_OBJ_FLAG_HIDDEN);
+}
+
+void ui_show_sync_toast(bool ok) {
+    // Flex re-lays out the row on the new text; lv_obj_align keeps the pill
+    // centered as its content width changes between the two strings.
+    lv_label_set_text(lbl_sync, ok ? "시각 동기됨" : "동기 실패");
+    lv_obj_remove_flag(sync_toast, LV_OBJ_FLAG_HIDDEN);
+}
+
+void ui_hide_sync_toast(void) {
+    lv_obj_add_flag(sync_toast, LV_OBJ_FLAG_HIDDEN);
 }
 
 // ---- Calendar screen ------------------------------------------------------
