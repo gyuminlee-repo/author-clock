@@ -166,9 +166,37 @@ static int quote_nlines(const char *text, const lv_font_t *font, int32_t box_w) 
     return wrap_quote(text, font, box_w, s, e);
 }
 
+// Pixel width of the byte run [a, b) in the given font.
+static int32_t run_w(const lv_font_t *f, const char *t, uint32_t a, uint32_t b) {
+    int32_t w = 0;
+    for (uint32_t j = a; j < b; ) {
+        uint32_t cp;
+        int nb = utf8_next(&t[j], &cp);
+        w += lv_font_get_glyph_width(f, cp, 0);
+        j += nb;
+    }
+    return w;
+}
+
+// Draw one text run [a, b) of the original string at (x, gy) with the given
+// color, left-aligned. Uses text_length so no copy or NUL terminator is needed,
+// and one lv_draw_label per run (not per glyph) keeps the layer's draw-task list
+// short: per-glyph lv_draw_character on a ~180-char quote piled up enough tasks
+// to wedge lv_draw_add_task's list walk (the panel then froze on that frame).
+static void draw_run(lv_layer_t *layer, lv_draw_label_dsc_t *dsc, const char *text,
+                     uint32_t a, uint32_t b, int32_t x, int32_t gy, int32_t fh,
+                     int32_t box_w, lv_color_t color) {
+    if (b <= a) return;
+    dsc->text = &text[a];
+    dsc->text_length = b - a;
+    dsc->color = color;
+    lv_area_t area = { x, gy, box_w - 1, gy + fh + 2 };
+    lv_draw_label(layer, dsc, &area);
+}
+
 // Draw the quote onto the canvas: vertically centered block, each line
-// horizontally centered. Glyphs in [hl_start, hl_end) get a black box + white
-// letter (inline inverted highlight); the rest are plain black on white.
+// horizontally centered. The time expression [hl_start, hl_end) is drawn as a
+// black box with white text (inline inverted highlight); the rest is black.
 static void render_quote(lv_obj_t *canvas, const char *text,
                          uint32_t hl_start, uint32_t hl_end,
                          const lv_font_t *font, int32_t line_h,
@@ -194,36 +222,47 @@ static void render_quote(lv_obj_t *canvas, const char *text,
     lv_draw_label_dsc_init(&ldsc);
     ldsc.font  = font;
     ldsc.align = LV_TEXT_ALIGN_LEFT;
+    // EXPAND stops lv_draw_label from wrapping a run when its area is a hair
+    // narrower than the text: a full-width line would otherwise wrap its last
+    // glyph onto a second row inside a one-line-tall area, overlapping the line
+    // below. Each run is pre-measured to sit on one line, so no wrap is wanted.
+    ldsc.flag = LV_TEXT_FLAG_EXPAND;
 
     for (int k = 0; k < n; k++) {
-        int32_t lw = 0;
-        for (uint32_t j = starts[k]; j < ends[k]; ) {
-            uint32_t cp;
-            int nb = utf8_next(&text[j], &cp);
-            lw += lv_font_get_glyph_width(font, cp, 0);
-            j += nb;
-        }
+        // Never draw past the box: an off-canvas glyph or rect becomes a draw
+        // task lv_canvas_finish_layer can never dispatch, wedging its drain loop
+        // (the panel then freezes on the previous frame). The glyph height fh can
+        // exceed the line pitch, so cap on the larger of the two; box_h never
+        // exceeds the canvas. Quotes too long to fit lose trailing lines instead
+        // of hanging.
+        int32_t line_extent = (fh > line_h) ? fh : line_h;
+        if (y + line_extent > box_h) break;
+        uint32_t ls = starts[k], le = ends[k];
+        int32_t lw = run_w(font, text, ls, le);
         int32_t x = (box_w - lw) / 2;
         if (x < 0) x = 0;
         int32_t gy = y + (line_h - fh) / 2;
         if (gy < 0) gy = 0;
 
-        for (uint32_t j = starts[k]; j < ends[k]; ) {
-            uint32_t cp;
-            int nb = utf8_next(&text[j], &cp);
-            int32_t gw = lv_font_get_glyph_width(font, cp, 0);
-            bool hl = (j >= hl_start && j < hl_end);
-            if (hl) {
-                lv_area_t r = { x - 1, y + 1, x + gw + 1, y + line_h - 1 };
-                lv_draw_rect(&layer, &rdsc, &r);
-                ldsc.color = lv_color_white();
-            } else {
-                ldsc.color = lv_color_black();
-            }
-            lv_point_t pt = { x, gy };
-            lv_draw_character(&layer, &ldsc, &pt, cp);
-            x += gw;
-            j += nb;
+        // Clip the highlight span to this line, splitting it into up to three
+        // runs: normal / highlighted / normal.
+        uint32_t hs = hl_start > ls ? hl_start : ls;
+        uint32_t he = hl_end   < le ? hl_end   : le;
+        bool has_hl = hs < he;
+
+        uint32_t seg1_end = has_hl ? hs : le;
+        draw_run(&layer, &ldsc, text, ls, seg1_end, x, gy, fh, box_w, lv_color_black());
+        x += run_w(font, text, ls, seg1_end);
+
+        if (has_hl) {
+            int32_t hw = run_w(font, text, hs, he);
+            int32_t rx1 = x - 1;         if (rx1 < 0) rx1 = 0;
+            int32_t rx2 = x + hw + 1;    if (rx2 > box_w - 1) rx2 = box_w - 1;
+            lv_area_t r = { rx1, y + 1, rx2, y + line_h - 1 };
+            lv_draw_rect(&layer, &rdsc, &r);
+            draw_run(&layer, &ldsc, text, hs, he, x, gy, fh, box_w, lv_color_white());
+            x += hw;
+            draw_run(&layer, &ldsc, text, he, le, x, gy, fh, box_w, lv_color_black());
         }
         y += line_h;
     }
