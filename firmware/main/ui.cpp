@@ -603,7 +603,7 @@ void ui_set_env(float temp_c, float humi_pct) {
     lv_obj_remove_flag(lbl_humi,  LV_OBJ_FLAG_HIDDEN);
 }
 
-void ui_set_battery(int percent, bool plugged, bool valid) {
+void ui_set_battery(int percent, bool charging, bool valid) {
     // A failed ADC read (valid=false) hides row 1 rather than showing a stale
     // or bogus level.
     if (!valid) {
@@ -611,21 +611,15 @@ void ui_set_battery(int percent, bool plugged, bool valid) {
         lv_obj_add_flag(lbl_batt,  LV_OBJ_FLAG_HIDDEN);
         return;
     }
-    if (plugged) {
-        // USB feeding: the plugged state is latched by voltage hysteresis in
-        // adc_battery.cpp (on >=4.05V, off <3.95V). Show the USB glyph alone;
-        // the percent is meaningless while charging, so hide the label.
-        lv_image_set_src(batt_img, &usb_icon);
-        lv_label_set_text(lbl_batt, "");
-        lv_obj_add_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        // Discharging (voltage below the hysteresis window): battery + percent.
-        lv_image_set_src(batt_img, &batt_icon);
-        char b[16];
-        snprintf(b, sizeof(b), "%d%%", percent);
-        lv_label_set_text(lbl_batt, b);
-        lv_obj_remove_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
-    }
+    // Always show the percent. Swap the glyph to USB only while the voltage is
+    // actively rising (charging, detected in adc_battery.cpp). A discharging or
+    // full-on-USB cell keeps the battery glyph, so the icon never falsely claims
+    // "plugged" while running on battery (which a fixed voltage threshold did).
+    lv_image_set_src(batt_img, charging ? &usb_icon : &batt_icon);
+    char b[16];
+    snprintf(b, sizeof(b), "%d%%", percent);
+    lv_label_set_text(lbl_batt, b);
+    lv_obj_remove_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(batt_img, LV_OBJ_FLAG_HIDDEN);
 }
 

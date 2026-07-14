@@ -81,6 +81,7 @@ extern "C" void app_main(void) {
     setenv("TZ", "KST-9", 1);
     tzset();
 
+
     // 2. RTC -> seed system time (KST). NTP task refines it later.
     if (pcf85063_init()) {
 #ifdef AC_SET_RTC_EPOCH
@@ -184,11 +185,11 @@ extern "C" void app_main(void) {
             // the lock and only the ui_set_battery label update touches LVGL. A
             // failed read passes valid=false, which hides row 3 until recovery.
             int bpct = 0;
-            bool bplugged = false;
-            bool bok = battery_read(NULL, &bpct, &bplugged);
+            bool bcharging = false;
+            bool bok = battery_read(NULL, &bpct, &bcharging);
             if (Lvgl_lock(-1)) {
                 ui_set_env(tc, hp);
-                ui_set_battery(bpct, bplugged, bok);
+                ui_set_battery(bpct, bcharging, bok);
                 Lvgl_unlock();
             }
         }
