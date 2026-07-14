@@ -59,6 +59,7 @@ static lv_obj_t *lbl_sync;      // status text, right
 
 // Calendar widgets
 static lv_obj_t *lbl_cal_head;
+static lv_obj_t *cal_icon;       // top-right, mirrors the clock pool sprite
 static lv_obj_t *cal_wday[7];
 static lv_obj_t *cal_cell[42];
 
@@ -512,7 +513,9 @@ void ui_next_top_icon(void) {
     }
     if (s_bag_pos >= icon_pool_count) reshuffle_bag();
     s_last_idx = s_bag[s_bag_pos++];
-    lv_image_set_src(top_icon, icon_pool[s_last_idx]);
+    const lv_image_dsc_t *img = icon_pool[s_last_idx];
+    lv_image_set_src(top_icon, img);
+    if (cal_icon) lv_image_set_src(cal_icon, img);   // calendar mirrors the clock
 }
 
 void ui_set_quote(const quote_t *q) {
@@ -644,45 +647,73 @@ static int days_in_month(int year, int mon0) {  // mon0: 0-11
     return d[mon0];
 }
 
+// Thin full-width black rule at (x, y), used for the header underline and the
+// week separators. remove_style_all strips the default lv_obj border/padding.
+static void cal_rule(int x, int y, int w, int h) {
+    lv_obj_t *r = lv_obj_create(scr_cal);
+    lv_obj_remove_style_all(r);
+    lv_obj_set_size(r, w, h);
+    lv_obj_set_style_bg_color(r, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+    lv_obj_set_pos(r, x, y);
+}
+
 static void build_calendar_screen(void) {
     scr_cal = lv_obj_create(NULL);
     style_screen_white(scr_cal);
 
-    // Cat icon (48x48 dithered), top-right of the calendar.
-    lv_obj_t *cal_icon = lv_image_create(scr_cal);
-    lv_image_set_src(cal_icon, &cat_icon_48);
+    // Top-right dot sprite, mirrors the clock: ui_next_top_icon points it at the
+    // same pool sprite each minute. Pool sprites are 72px; scale to ~48px so it
+    // clears the weekday row. The cat is only the boot placeholder.
+    cal_icon = lv_image_create(scr_cal);
+    lv_image_set_src(cal_icon, &cat_icon);
     lv_obj_set_style_image_recolor(cal_icon, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(cal_icon, LV_OPA_COVER, 0);
-    lv_obj_set_pos(cal_icon, LCD_WIDTH - 48 - 6, 4);
+    lv_image_set_scale(cal_icon, 171);            // 72 -> ~48 px, centered in box
+    lv_obj_set_pos(cal_icon, LCD_WIDTH - 72 - 4, 2);
 
+    // Header "YYYY년 M월", top-left so it clears the top-right sprite.
     lbl_cal_head = lv_label_create(scr_cal);
     lv_obj_set_style_text_font(lbl_cal_head, &font_ko_44, 0);
     lv_obj_set_style_text_color(lbl_cal_head, lv_color_black(), 0);
     lv_label_set_text(lbl_cal_head, "");
-    lv_obj_align(lbl_cal_head, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_align(lbl_cal_head, LV_ALIGN_TOP_LEFT, 12, 8);
 
-    const int x0 = 12, y0 = 70, cw = 53, ch = 36;
+    const int x0 = 12, y0 = 68, cw = 53, ch = 32;
     for (int c = 0; c < 7; c++) {
         cal_wday[c] = lv_label_create(scr_cal);
         lv_obj_set_style_text_font(cal_wday[c], &font_ko_28, 0);
-        lv_obj_set_style_text_color(cal_wday[c], lv_color_black(), 0);
         lv_obj_set_width(cal_wday[c], cw);
         lv_obj_set_style_text_align(cal_wday[c], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_ver(cal_wday[c], 1, 0);
+        if (c == 0 || c == 6) {          // weekend: inverted marker
+            lv_obj_set_style_bg_color(cal_wday[c], lv_color_black(), 0);
+            lv_obj_set_style_bg_opa(cal_wday[c], LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(cal_wday[c], 4, 0);
+            lv_obj_set_style_text_color(cal_wday[c], lv_color_white(), 0);
+        } else {
+            lv_obj_set_style_text_color(cal_wday[c], lv_color_black(), 0);
+        }
         lv_label_set_text(cal_wday[c], WDAY_KO[c]);
         lv_obj_set_pos(cal_wday[c], x0 + c * cw, y0);
     }
+    cal_rule(x0, y0 + 30, 7 * cw, 2);              // underline below weekdays
 
+    const int gy = y0 + 36;
     for (int i = 0; i < 42; i++) {
         int r = i / 7, c = i % 7;
         cal_cell[i] = lv_label_create(scr_cal);
         lv_obj_set_style_text_font(cal_cell[i], &font_ko_28, 0);
         lv_obj_set_style_text_color(cal_cell[i], lv_color_black(), 0);
         lv_obj_set_style_pad_all(cal_cell[i], 2, 0);
+        lv_obj_set_style_radius(cal_cell[i], 5, 0);   // rounds the today box
         lv_obj_set_width(cal_cell[i], cw);
         lv_obj_set_style_text_align(cal_cell[i], LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text(cal_cell[i], "");
-        lv_obj_set_pos(cal_cell[i], x0 + c * cw, y0 + 34 + r * ch);
+        lv_obj_set_pos(cal_cell[i], x0 + c * cw, gy + r * ch);
     }
+    for (int r = 0; r < 5; r++)                    // thin week separators
+        cal_rule(x0, gy + (r + 1) * ch - 2, 7 * cw, 1);
 }
 
 void ui_build_calendar(const struct tm *now) {
