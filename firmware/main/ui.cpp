@@ -312,11 +312,15 @@ static void build_clock_screen(void) {
     // Top-right pool sprite (72x72), recolored black, one per minute via the
     // shuffle bag in ui_next_top_icon. The cat is only the boot placeholder
     // shown for the ~1s before the first minute tick swaps in a pool sprite.
+    // Vertically center the icon on the big clock instead of floating it at the
+    // top: the clock label sits at TOP_MID y=20 (normal mode), so its center is
+    // at 20 + line_height/2; place the 72px icon so its center matches.
     top_icon = lv_image_create(scr_clock);
     lv_image_set_src(top_icon, &cat_icon);
     lv_obj_set_style_image_recolor(top_icon, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(top_icon, LV_OPA_COVER, 0);
-    lv_obj_set_pos(top_icon, LCD_WIDTH - 72 - 6, 6);
+    int32_t clock_cy = 20 + lv_font_get_line_height(&font_digits_96) / 2;
+    lv_obj_set_pos(top_icon, LCD_WIDTH - 72 - 6, clock_cy - 72 / 2);
 
     // Top-left environment readout, mirroring the top-right cat icon. Three
     // rows of [20x20 icon at x=6] + [font_ko_18 value at x=30], battery on top:
