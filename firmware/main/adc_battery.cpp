@@ -18,6 +18,11 @@ static bool                      initialized = false;
 
 #define BATT_CHANNEL   ADC_CHANNEL_3     // GPIO4 on ADC1
 #define BATT_SAMPLES   8
+// Charging = voltage rising over the history window. At the 30s read cadence,
+// 6 samples span ~3 min; a charger lifts the cell by more than BATT_RISE_V over
+// that window while a discharging cell holds or falls. Tune on real hardware.
+#define BATT_HIST      6
+#define BATT_RISE_V    0.015f
 
 bool battery_init(void) {
     adc_oneshot_unit_init_cfg_t unit_cfg = {};
@@ -83,8 +88,22 @@ bool battery_read(float *volts, int *percent, bool *plugged) {
 
     if (volts)   *volts = v;
     if (percent) *percent = (int)(lvl + 0.5f);
-    // USB feeding pushes the rail near full-charge voltage; a cell on its own
-    // sags below this within minutes of use, so treat a high reading as plugged.
-    if (plugged) *plugged = (v >= 4.10f);
+    // Charging detection without a VBUS/charge-status pin (this board exposes
+    // none, confirmed against the Waveshare schematic and ADC example). An
+    // absolute-voltage compare cannot work: a near-full cell on its own sits at
+    // ~4.1V, indistinguishable from the ~4.1V charging plateau, so a threshold
+    // falsely reports "plugged" while running on battery. Instead track a short
+    // voltage history and report charging only when the voltage is clearly
+    // RISING, which a charger does (CC/CV) and a discharging cell never does.
+    // A full cell on USB reads flat, so it shows as not-charging (honest: it is
+    // simply full); *percent stays valid either way so the UI always has a level.
+    static float hist[BATT_HIST] = {0};
+    static int   hist_n = 0;
+    int idx = hist_n % BATT_HIST;
+    float oldest = hist[idx];              // value from BATT_HIST reads ago
+    hist[idx] = v;
+    hist_n++;
+    bool charging = (hist_n > BATT_HIST) && ((v - oldest) > BATT_RISE_V);
+    if (plugged) *plugged = charging;
     return true;
 }

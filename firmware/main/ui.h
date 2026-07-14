@@ -18,6 +18,13 @@ void ui_start_button_task(void);
 // Cheap per-second update: just the big HH:MM digits.
 void ui_set_time_text(int hour, int minute);
 
+// Date line under the clock: month, day-of-month, weekday (0=Sun..6=Sat).
+void ui_set_date_text(int mon, int mday, int wday);
+
+// Per-minute update: swap the top-right sprite to the next one from the icon
+// pool shuffle bag. Call under the LVGL lock alongside the quote update.
+void ui_next_top_icon(void);
+
 // Per-minute update: quote body, source, and the inverted time-expression
 // highlight. Pass q = NULL when no quote exists for this minute (time only).
 void ui_set_quote(const quote_t *q);
@@ -31,10 +38,10 @@ void ui_build_calendar(const struct tm *now);
 void ui_set_env(float temp_c, float humi_pct);
 
 // Update the top-left battery readout, row 1 (top) of the environment block.
-// plugged=true (USB feeding, V>=4.2) shows the USB glyph alone and hides the
-// percent; plugged=false shows the battery glyph + percent (0..100 level).
+// The percent (0..100) is always shown; the glyph is USB while charging=true
+// (voltage rising, detected in adc_battery.cpp) and the battery glyph otherwise.
 // valid=false (a failed ADC read) hides the row.
-void ui_set_battery(int percent, bool plugged, bool valid);
+void ui_set_battery(int percent, bool charging, bool valid);
 
 // Bottom-center sync toast: a wifi icon + one-line status text on an opaque
 // white backing. ok => "시각 동기됨", else "동기 실패". Both calls take the

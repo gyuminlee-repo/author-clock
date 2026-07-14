@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Build the top-right icon pool as one LVGL 9 A8 image bank.
+
+Reads every PNG under two asset folders and emits a single generated source:
+  ../main/icon_pool.c   -> icon_pool[] (array of lv_image_dsc_t*), icon_pool_count
+
+Folders (both scanned, sorted, concatenated):
+  ../assets/pool_src/    committed CC0 baseline art (ships with the repo)
+  ../assets/pool_local/  gitignored drop folder for third-party sprites that
+                         cannot be redistributed (kept off the public repo)
+
+Each PNG is fit into a TARGET x TARGET box (aspect kept, centered), then
+Floyd-Steinberg dithered to 1-bit and stored as an A8 alpha map: black ink is
+opaque (alpha 255), paper is transparent (alpha 0). ui.cpp recolors the whole
+image black at render time, so every sprite shows as black dots on the mono
+reflective panel, exactly like the cat icon.
+
+The generated icon_pool.c is gitignored (it may embed local third-party art),
+so run this before building, the same way fonts are generated:
+  cd firmware/tools && python3 make_pool.py
+"""
+import os
+import random
+
+from PIL import Image
+
+try:                       # Pillow >= 9.1 moved filters under Resampling
+    RS_NEAREST = Image.Resampling.NEAREST
+    RS_LANCZOS = Image.Resampling.LANCZOS
+except AttributeError:     # older Pillow keeps them on the module
+    RS_NEAREST = Image.NEAREST
+    RS_LANCZOS = Image.LANCZOS
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SRC_DIRS = [
+    os.path.join(HERE, "..", "assets", "pool_src"),
+    os.path.join(HERE, "..", "assets", "pool_local"),
+]
+OUT_C = os.path.join(HERE, "..", "main", "icon_pool.c")
+
+TARGET = 72                 # box side in px, matches the cat icon slot
+ALPHA_CUT = 128            # source alpha at/above this counts as sprite body
+# Sources are low-bit pixel art (Game Boy sprites, pixel icons), so a hard
+# luminance threshold keeps the flat shapes clean; error-diffusion dithering
+# turns their few shades into scribbly noise. Darker than THRESH becomes ink.
+THRESH = 150
+# Flash budget guard. The factory partition gives the app 6MB; the rest of the
+# binary is ~2MB, so cap embedded image data well under the remaining room and
+# trim (deterministically) rather than overflow the partition.
+SAFE_MAX_BYTES = 3_400_000
+# Fixed-seed shuffle before the budget trim so that, when more art than the cap
+# is present, the survivors are a fair mix of every source folder instead of
+# whichever sorts first. Deterministic, so builds stay reproducible.
+SHUFFLE_SEED = 20260713
+
+
+def collect_pngs():
+    paths = []
+    for d in SRC_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for name in sorted(os.listdir(d)):
+            if name.lower().endswith(".png"):
+                paths.append(os.path.join(d, name))
+    return paths
+
+
+def ink_mask(rgba):
+    """1-bit ink mask (255 = ink) at the native size: pixels that are opaque
+    enough and dark enough. Composite over white so transparent areas never
+    count as ink."""
+    alpha = rgba.getchannel("A")
+    white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    body = Image.alpha_composite(white, rgba).convert("L")
+    ap = list(alpha.getdata())
+    bp = list(body.getdata())            # 0 = black .. 255 = white
+    mask = Image.new("L", rgba.size, 0)
+    mask.putdata([255 if (ap[i] >= ALPHA_CUT and bp[i] < THRESH) else 0
+                  for i in range(len(ap))])
+    return mask
+
+
+def render_alpha(path):
+    """Return a TARGET*TARGET list of 0/255 alpha bytes for one sprite.
+
+    Crop to the ink bounding box first so every sprite fills the box to the
+    same extent (uniform apparent size regardless of native padding), then fit
+    into the TARGET box with a single scale factor for both axes so the aspect
+    ratio is preserved (never squash one axis)."""
+    im = Image.open(path)
+    im.seek(0)
+    im = im.convert("RGBA")
+    bbox = ink_mask(im).getbbox()
+    if bbox:
+        im = im.crop(bbox)
+
+    w, h = im.size
+    scale = TARGET / float(max(w, h))
+    nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
+    # Nearest keeps upscaled pixel art crisp; Lanczos smooths downscales.
+    resample = RS_NEAREST if scale >= 1.0 else RS_LANCZOS
+    im = im.resize((nw, nh), resample)
+
+    canvas = Image.new("RGBA", (TARGET, TARGET), (255, 255, 255, 0))
+    canvas.paste(im, ((TARGET - nw) // 2, (TARGET - nh) // 2), im)
+
+    mp = list(ink_mask(canvas).getdata())
+    return [255 if mp[i] else 0 for i in range(TARGET * TARGET)]
+
+
+def main():
+    paths = collect_pngs()
+    random.Random(SHUFFLE_SEED).shuffle(paths)
+    per = TARGET * TARGET
+    kept = []
+    total = 0
+    for p in paths:
+        if total + per > SAFE_MAX_BYTES:
+            break
+        try:
+            kept.append((p, render_alpha(p)))
+            total += per
+        except Exception as exc:            # skip an unreadable PNG, keep going
+            print("skip", os.path.basename(p), exc)
+
+    lines = ["// Generated by tools/make_pool.py. Do not edit by hand.",
+             '#include "lvgl.h"', ""]
+    for idx, (_p, amap) in enumerate(kept):
+        sym = "ic_%04d" % idx
+        lines.append("static const uint8_t %s_map[%d] = {" % (sym, per))
+        for y in range(TARGET):
+            chunk = amap[y * TARGET:(y + 1) * TARGET]
+            lines.append("    " + ", ".join("0x%02X" % v for v in chunk) + ",")
+        lines.append("};")
+        lines.append("static const lv_image_dsc_t %s = {" % sym)
+        lines.append("    .header = { .magic = LV_IMAGE_HEADER_MAGIC,"
+                     " .cf = LV_COLOR_FORMAT_A8, .flags = 0,")
+        lines.append("        .w = %d, .h = %d, .stride = %d, },"
+                     % (TARGET, TARGET, TARGET))
+        lines.append("    .data_size = %d, .data = %s_map," % (per, sym))
+        lines.append("};")
+        lines.append("")
+
+    lines.append("const lv_image_dsc_t * const icon_pool[] = {")
+    for idx in range(len(kept)):
+        lines.append("    &ic_%04d," % idx)
+    lines.append("};")
+    lines.append("const int icon_pool_count = %d;" % len(kept))
+    lines.append("")
+
+    with open(OUT_C, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines))
+
+    dropped = len(paths) - len(kept)
+    print("icon_pool.c: %d sprites, %.2f MB image data (%d dropped by budget)"
+          % (len(kept), total / 1e6, dropped))
+
+
+if __name__ == "__main__":
+    main()

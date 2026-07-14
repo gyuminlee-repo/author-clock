@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <freertos/FreeRTOS.h>
@@ -6,9 +7,11 @@
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
 #include "lvgl.h"
 #include "lvgl_port.h"
 #include "ui.h"
+#include "icon_pool.h"
 #include "user_config.h"
 
 // Fonts and icon are compiled into the binary (see main/CMakeLists.txt).
@@ -35,6 +38,8 @@ static lv_obj_t *scr_cal;
 
 // Clock widgets
 static lv_obj_t *lbl_time;      // big HH:MM
+static lv_obj_t *lbl_date;      // date + weekday, under the clock (normal mode)
+static lv_obj_t *top_icon;      // top-right pool sprite, one per minute
 static lv_obj_t *canvas_quote;  // quote body, drawn with inline inverted highlight
 static uint8_t  *canvas_buf;    // RGB565 canvas backing buffer (PSRAM)
 static lv_obj_t *lbl_source;    // work + author
@@ -54,6 +59,7 @@ static lv_obj_t *lbl_sync;      // status text, right
 
 // Calendar widgets
 static lv_obj_t *lbl_cal_head;
+static lv_obj_t *cal_icon;       // top-right, mirrors the clock pool sprite
 static lv_obj_t *cal_wday[7];
 static lv_obj_t *cal_cell[42];
 
@@ -280,6 +286,8 @@ static void apply_clock_layout(bool compact) {
         lv_obj_align(canvas_quote, LV_ALIGN_TOP_MID, 0, QUOTE_TOP_C);
         lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
         lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -4);
+        // No room under the shrunk time: the compact quote box starts at 58.
+        lv_obj_add_flag(lbl_date, LV_OBJ_FLAG_HIDDEN);
     } else {
         // 96px "00:00" (~225px max) centered: left/right margins ~88px each,
         // clearing the top-left env block (ends x84) and the top-right 72px cat
@@ -291,6 +299,8 @@ static void apply_clock_layout(bool compact) {
         // auto-fit-shrunk quote body.
         lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
         lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -6);
+        lv_obj_remove_flag(lbl_date, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 96);
     }
 }
 
@@ -305,12 +315,18 @@ static void build_clock_screen(void) {
     scr_clock = lv_obj_create(NULL);
     style_screen_white(scr_clock);
 
-    // Cat icon (72x72 dithered), top-right, always on.
-    lv_obj_t *icon = lv_image_create(scr_clock);
-    lv_image_set_src(icon, &cat_icon);
-    lv_obj_set_style_image_recolor(icon, lv_color_black(), 0);
-    lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
-    lv_obj_set_pos(icon, LCD_WIDTH - 72 - 6, 6);
+    // Top-right pool sprite (72x72), recolored black, one per minute via the
+    // shuffle bag in ui_next_top_icon. The cat is only the boot placeholder
+    // shown for the ~1s before the first minute tick swaps in a pool sprite.
+    // Vertically center the icon on the big clock instead of floating it at the
+    // top: the clock label sits at TOP_MID y=20 (normal mode), so its center is
+    // at 20 + line_height/2; place the 72px icon so its center matches.
+    top_icon = lv_image_create(scr_clock);
+    lv_image_set_src(top_icon, &cat_icon);
+    lv_obj_set_style_image_recolor(top_icon, lv_color_black(), 0);
+    lv_obj_set_style_image_recolor_opa(top_icon, LV_OPA_COVER, 0);
+    int32_t clock_cy = 20 + lv_font_get_line_height(&font_digits_96) / 2;
+    lv_obj_set_pos(top_icon, LCD_WIDTH - 72 - 6, clock_cy - 72 / 2);
 
     // Top-left environment readout, mirroring the top-right cat icon. Three
     // rows of [20x20 icon at x=6] + [font_ko_18 value at x=30], battery on top:
@@ -333,42 +349,45 @@ static void build_clock_screen(void) {
     lv_image_set_src(batt_img, &batt_icon);
     lv_obj_set_style_image_recolor(batt_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(batt_img, LV_OPA_COVER, 0);
-    lv_obj_set_pos(batt_img, 6, 8);
+    // The three env rows are shifted down together so the block center (row 2,
+    // temperature) lines up with the big clock center, matching the top-right
+    // icon. Rows were at y 8/30/52 (center 40); +15 puts the center near 55.
+    lv_obj_set_pos(batt_img, 6, 23);
     lv_obj_add_flag(batt_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_batt = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_batt, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_batt, lv_color_black(), 0);
     lv_label_set_text(lbl_batt, "");
-    lv_obj_set_pos(lbl_batt, 30, 9);
+    lv_obj_set_pos(lbl_batt, 30, 24);
     lv_obj_add_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
 
     therm_img = lv_image_create(scr_clock);
     lv_image_set_src(therm_img, &therm_icon);
     lv_obj_set_style_image_recolor(therm_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(therm_img, LV_OPA_COVER, 0);
-    lv_obj_set_pos(therm_img, 6, 30);
+    lv_obj_set_pos(therm_img, 6, 45);
     lv_obj_add_flag(therm_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_temp = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_temp, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_temp, lv_color_black(), 0);
     lv_label_set_text(lbl_temp, "");
-    lv_obj_set_pos(lbl_temp, 30, 31);
+    lv_obj_set_pos(lbl_temp, 30, 46);
     lv_obj_add_flag(lbl_temp, LV_OBJ_FLAG_HIDDEN);
 
     drop_img = lv_image_create(scr_clock);
     lv_image_set_src(drop_img, &drop_icon);
     lv_obj_set_style_image_recolor(drop_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(drop_img, LV_OPA_COVER, 0);
-    lv_obj_set_pos(drop_img, 6, 52);
+    lv_obj_set_pos(drop_img, 6, 67);
     lv_obj_add_flag(drop_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_humi = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_humi, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_humi, lv_color_black(), 0);
     lv_label_set_text(lbl_humi, "");
-    lv_obj_set_pos(lbl_humi, 30, 53);
+    lv_obj_set_pos(lbl_humi, 30, 68);
     lv_obj_add_flag(lbl_humi, LV_OBJ_FLAG_HIDDEN);
 
     // Big time: the star of the screen (~40% of height). Centered now that the
@@ -378,6 +397,15 @@ static void build_clock_screen(void) {
     lv_obj_set_style_text_color(lbl_time, lv_color_black(), 0);
     lv_label_set_text(lbl_time, "00:00");
     lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 20);
+
+    // Date + weekday in the gap under the 96px clock (normal mode only; compact
+    // mode hides it, see apply_clock_layout). font_ko_22 sits between the big
+    // time above and the quote box (QUOTE_TOP_N=132) below.
+    lbl_date = lv_label_create(scr_clock);
+    lv_obj_set_style_text_font(lbl_date, &font_ko_22, 0);
+    lv_obj_set_style_text_color(lbl_date, lv_color_black(), 0);
+    lv_label_set_text(lbl_date, "");
+    lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 96);
 
     // Quote canvas: one fixed RGB565 canvas (compact box size). Auto-fit font
     // and inline highlight are handled per quote in ui_set_quote. Created
@@ -442,6 +470,52 @@ void ui_set_time_text(int hour, int minute) {
     char buf[6];
     snprintf(buf, sizeof(buf), "%02d:%02d", hour, minute);
     lv_label_set_text(lbl_time, buf);
+}
+
+// Date line under the clock: "M월 D일 (요일)". wday is 0=Sun..6=Sat. Only shown
+// in normal mode; apply_clock_layout hides the label in compact mode.
+void ui_set_date_text(int mon, int mday, int wday) {
+    if (wday < 0 || wday > 6) wday = 0;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d월 %d일 (%s)", mon, mday, WDAY_KO[wday]);
+    lv_label_set_text(lbl_date, buf);
+}
+
+// Shuffle bag over the icon pool: deal the pool in a random order, one sprite
+// per minute, and only reshuffle once every sprite has been shown. This makes
+// each sprite reappear at a fixed spacing of exactly icon_pool_count minutes,
+// so nothing repeats at short intervals (unlike plain random draws). Across a
+// reshuffle the first of the new bag is kept different from the last shown.
+static uint16_t *s_bag = NULL;
+static int s_bag_pos = 0;
+static int s_last_idx = -1;
+
+static void reshuffle_bag(void) {
+    int n = icon_pool_count;
+    for (int i = 0; i < n; i++) s_bag[i] = (uint16_t)i;
+    for (int i = n - 1; i > 0; i--) {          // Fisher-Yates
+        int j = (int)(esp_random() % (uint32_t)(i + 1));
+        uint16_t t = s_bag[i]; s_bag[i] = s_bag[j]; s_bag[j] = t;
+    }
+    if (n > 1 && s_bag[0] == s_last_idx) {     // avoid back-to-back repeat
+        uint16_t t = s_bag[0]; s_bag[0] = s_bag[1]; s_bag[1] = t;
+    }
+    s_bag_pos = 0;
+}
+
+// Advance to the next pool sprite. Call under the LVGL lock, once per minute.
+void ui_next_top_icon(void) {
+    if (icon_pool_count <= 0 || !top_icon) return;
+    if (!s_bag) {
+        s_bag = (uint16_t *)malloc(sizeof(uint16_t) * icon_pool_count);
+        if (!s_bag) return;                    // stay on the boot placeholder
+        reshuffle_bag();
+    }
+    if (s_bag_pos >= icon_pool_count) reshuffle_bag();
+    s_last_idx = s_bag[s_bag_pos++];
+    const lv_image_dsc_t *img = icon_pool[s_last_idx];
+    lv_image_set_src(top_icon, img);
+    if (cal_icon) lv_image_set_src(cal_icon, img);   // calendar mirrors the clock
 }
 
 void ui_set_quote(const quote_t *q) {
@@ -532,7 +606,7 @@ void ui_set_env(float temp_c, float humi_pct) {
     lv_obj_remove_flag(lbl_humi,  LV_OBJ_FLAG_HIDDEN);
 }
 
-void ui_set_battery(int percent, bool plugged, bool valid) {
+void ui_set_battery(int percent, bool charging, bool valid) {
     // A failed ADC read (valid=false) hides row 1 rather than showing a stale
     // or bogus level.
     if (!valid) {
@@ -540,20 +614,15 @@ void ui_set_battery(int percent, bool plugged, bool valid) {
         lv_obj_add_flag(lbl_batt,  LV_OBJ_FLAG_HIDDEN);
         return;
     }
-    if (plugged) {
-        // USB feeding (V>=4.2): show the USB glyph alone. The percent is
-        // meaningless while charging, so the label is cleared and hidden.
-        lv_image_set_src(batt_img, &usb_icon);
-        lv_label_set_text(lbl_batt, "");
-        lv_obj_add_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        // Discharging (3.0 <= V < 4.2): battery glyph + percent.
-        lv_image_set_src(batt_img, &batt_icon);
-        char b[16];
-        snprintf(b, sizeof(b), "%d%%", percent);
-        lv_label_set_text(lbl_batt, b);
-        lv_obj_remove_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
-    }
+    // Always show the percent. Swap the glyph to USB only while the voltage is
+    // actively rising (charging, detected in adc_battery.cpp). A discharging or
+    // full-on-USB cell keeps the battery glyph, so the icon never falsely claims
+    // "plugged" while running on battery (which a fixed voltage threshold did).
+    lv_image_set_src(batt_img, charging ? &usb_icon : &batt_icon);
+    char b[16];
+    snprintf(b, sizeof(b), "%d%%", percent);
+    lv_label_set_text(lbl_batt, b);
+    lv_obj_remove_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(batt_img, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -578,45 +647,73 @@ static int days_in_month(int year, int mon0) {  // mon0: 0-11
     return d[mon0];
 }
 
+// Thin full-width black rule at (x, y), used for the header underline and the
+// week separators. remove_style_all strips the default lv_obj border/padding.
+static void cal_rule(int x, int y, int w, int h) {
+    lv_obj_t *r = lv_obj_create(scr_cal);
+    lv_obj_remove_style_all(r);
+    lv_obj_set_size(r, w, h);
+    lv_obj_set_style_bg_color(r, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+    lv_obj_set_pos(r, x, y);
+}
+
 static void build_calendar_screen(void) {
     scr_cal = lv_obj_create(NULL);
     style_screen_white(scr_cal);
 
-    // Cat icon (48x48 dithered), top-right of the calendar.
-    lv_obj_t *cal_icon = lv_image_create(scr_cal);
-    lv_image_set_src(cal_icon, &cat_icon_48);
+    // Top-right dot sprite, mirrors the clock: ui_next_top_icon points it at the
+    // same pool sprite each minute. Pool sprites are 72px; scale to ~48px so it
+    // clears the weekday row. The cat is only the boot placeholder.
+    cal_icon = lv_image_create(scr_cal);
+    lv_image_set_src(cal_icon, &cat_icon);
     lv_obj_set_style_image_recolor(cal_icon, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(cal_icon, LV_OPA_COVER, 0);
-    lv_obj_set_pos(cal_icon, LCD_WIDTH - 48 - 6, 4);
+    lv_image_set_scale(cal_icon, 171);            // 72 -> ~48 px, centered in box
+    lv_obj_set_pos(cal_icon, LCD_WIDTH - 72 - 4, 2);
 
+    // Header "YYYY년 M월", top-left so it clears the top-right sprite.
     lbl_cal_head = lv_label_create(scr_cal);
     lv_obj_set_style_text_font(lbl_cal_head, &font_ko_44, 0);
     lv_obj_set_style_text_color(lbl_cal_head, lv_color_black(), 0);
     lv_label_set_text(lbl_cal_head, "");
-    lv_obj_align(lbl_cal_head, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_align(lbl_cal_head, LV_ALIGN_TOP_LEFT, 12, 8);
 
-    const int x0 = 12, y0 = 70, cw = 53, ch = 36;
+    const int x0 = 12, y0 = 68, cw = 53, ch = 32;
     for (int c = 0; c < 7; c++) {
         cal_wday[c] = lv_label_create(scr_cal);
         lv_obj_set_style_text_font(cal_wday[c], &font_ko_28, 0);
-        lv_obj_set_style_text_color(cal_wday[c], lv_color_black(), 0);
         lv_obj_set_width(cal_wday[c], cw);
         lv_obj_set_style_text_align(cal_wday[c], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_ver(cal_wday[c], 1, 0);
+        if (c == 0 || c == 6) {          // weekend: inverted marker
+            lv_obj_set_style_bg_color(cal_wday[c], lv_color_black(), 0);
+            lv_obj_set_style_bg_opa(cal_wday[c], LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(cal_wday[c], 4, 0);
+            lv_obj_set_style_text_color(cal_wday[c], lv_color_white(), 0);
+        } else {
+            lv_obj_set_style_text_color(cal_wday[c], lv_color_black(), 0);
+        }
         lv_label_set_text(cal_wday[c], WDAY_KO[c]);
         lv_obj_set_pos(cal_wday[c], x0 + c * cw, y0);
     }
+    cal_rule(x0, y0 + 30, 7 * cw, 2);              // underline below weekdays
 
+    const int gy = y0 + 36;
     for (int i = 0; i < 42; i++) {
         int r = i / 7, c = i % 7;
         cal_cell[i] = lv_label_create(scr_cal);
         lv_obj_set_style_text_font(cal_cell[i], &font_ko_28, 0);
         lv_obj_set_style_text_color(cal_cell[i], lv_color_black(), 0);
         lv_obj_set_style_pad_all(cal_cell[i], 2, 0);
+        lv_obj_set_style_radius(cal_cell[i], 5, 0);   // rounds the today box
         lv_obj_set_width(cal_cell[i], cw);
         lv_obj_set_style_text_align(cal_cell[i], LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text(cal_cell[i], "");
-        lv_obj_set_pos(cal_cell[i], x0 + c * cw, y0 + 34 + r * ch);
+        lv_obj_set_pos(cal_cell[i], x0 + c * cw, gy + r * ch);
     }
+    for (int r = 0; r < 5; r++)                    // thin week separators
+        cal_rule(x0, gy + (r + 1) * ch - 2, 7 * cw, 1);
 }
 
 void ui_build_calendar(const struct tm *now) {

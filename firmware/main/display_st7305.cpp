@@ -181,6 +181,13 @@ void DisplayPort::RLCD_ColorClear(uint8_t color) {
 }
 
 void DisplayPort::RLCD_Display() {
+    // HPM (32Hz) for a fast, clean GRAM update, then drop back to LPM (1Hz
+    // self-refresh) which holds the static clock image at ~1mA instead of the
+    // ~5mA HPM idle. Frame rate + EQ for both modes are set once in init, so
+    // the switch is a single command. The panel updates once per minute, so the
+    // brief HPM window is negligible.
+    RLCD_SendCommand(0x38);   // High Power Mode ON
+
     RLCD_SendCommand(0x2A);   // Column Address Set
     RLCD_SendData(0x12);
     RLCD_SendData(0x2A);
@@ -192,6 +199,8 @@ void DisplayPort::RLCD_Display() {
     RLCD_SendCommand(0x2C);   // Memory write
 
     RLCD_Sendbuffera(DispBuffer, DisplayLen);
+
+    RLCD_SendCommand(0x39);   // Low Power Mode ON (holds image at ~1mA)
 }
 
 void DisplayPort::RLCD_Reset(void) {
