@@ -38,10 +38,10 @@ void ui_build_calendar(const struct tm *now);
 void ui_set_env(float temp_c, float humi_pct);
 
 // Update the top-left battery readout, row 1 (top) of the environment block.
-// plugged=true (USB feeding, V>=4.2) shows the USB glyph alone and hides the
-// percent; plugged=false shows the battery glyph + percent (0..100 level).
+// The percent (0..100) is always shown; the glyph is USB while charging=true
+// (voltage rising, detected in adc_battery.cpp) and the battery glyph otherwise.
 // valid=false (a failed ADC read) hides the row.
-void ui_set_battery(int percent, bool plugged, bool valid);
+void ui_set_battery(int percent, bool charging, bool valid);
 
 // Bottom-center sync toast: a wifi icon + one-line status text on an opaque
 // white backing. ok => "시각 동기됨", else "동기 실패". Both calls take the
