@@ -84,7 +84,15 @@ bool battery_read(float *volts, int *percent, bool *plugged) {
     if (volts)   *volts = v;
     if (percent) *percent = (int)(lvl + 0.5f);
     // USB feeding pushes the rail near full-charge voltage; a cell on its own
-    // sags below this within minutes of use, so treat a high reading as plugged.
-    if (plugged) *plugged = (v >= 4.10f);
+    // sags below this in use, so a high reading means plugged. This board has
+    // no VBUS/charge-status pin (confirmed against the Waveshare schematic and
+    // ADC example), so voltage is the only signal. Measured charging voltage
+    // sits flat at ~4.10V, right on the old 4.10 compare, which made plugged
+    // flicker. Latch it with hysteresis: turn on above PLUG_ON, and only turn
+    // off once the cell has clearly sagged below PLUG_OFF under load.
+    static bool s_plugged = false;
+    if (v >= 4.05f)      s_plugged = true;
+    else if (v < 3.95f)  s_plugged = false;
+    if (plugged) *plugged = s_plugged;
     return true;
 }
