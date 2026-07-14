@@ -182,10 +182,9 @@ extern "C" void app_main(void) {
             // needs no LVGL lock (independent peripheral), so read it outside
             // the lock and only the ui_set_battery label update touches LVGL. A
             // failed read passes valid=false, which hides row 3 until recovery.
-            float bv = 0.0f;
             int bpct = 0;
             bool bplugged = false;
-            bool bok = battery_read(&bv, &bpct, &bplugged);
+            bool bok = battery_read(NULL, &bpct, &bplugged);
             if (Lvgl_lock(-1)) {
                 ui_set_env(tc, hp);
                 ui_set_battery(bpct, bplugged, bok);

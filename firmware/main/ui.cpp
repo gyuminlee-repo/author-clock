@@ -343,42 +343,45 @@ static void build_clock_screen(void) {
     lv_image_set_src(batt_img, &batt_icon);
     lv_obj_set_style_image_recolor(batt_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(batt_img, LV_OPA_COVER, 0);
-    lv_obj_set_pos(batt_img, 6, 8);
+    // The three env rows are shifted down together so the block center (row 2,
+    // temperature) lines up with the big clock center, matching the top-right
+    // icon. Rows were at y 8/30/52 (center 40); +15 puts the center near 55.
+    lv_obj_set_pos(batt_img, 6, 23);
     lv_obj_add_flag(batt_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_batt = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_batt, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_batt, lv_color_black(), 0);
     lv_label_set_text(lbl_batt, "");
-    lv_obj_set_pos(lbl_batt, 30, 9);
+    lv_obj_set_pos(lbl_batt, 30, 24);
     lv_obj_add_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
 
     therm_img = lv_image_create(scr_clock);
     lv_image_set_src(therm_img, &therm_icon);
     lv_obj_set_style_image_recolor(therm_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(therm_img, LV_OPA_COVER, 0);
-    lv_obj_set_pos(therm_img, 6, 30);
+    lv_obj_set_pos(therm_img, 6, 45);
     lv_obj_add_flag(therm_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_temp = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_temp, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_temp, lv_color_black(), 0);
     lv_label_set_text(lbl_temp, "");
-    lv_obj_set_pos(lbl_temp, 30, 31);
+    lv_obj_set_pos(lbl_temp, 30, 46);
     lv_obj_add_flag(lbl_temp, LV_OBJ_FLAG_HIDDEN);
 
     drop_img = lv_image_create(scr_clock);
     lv_image_set_src(drop_img, &drop_icon);
     lv_obj_set_style_image_recolor(drop_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(drop_img, LV_OPA_COVER, 0);
-    lv_obj_set_pos(drop_img, 6, 52);
+    lv_obj_set_pos(drop_img, 6, 67);
     lv_obj_add_flag(drop_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_humi = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_humi, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_humi, lv_color_black(), 0);
     lv_label_set_text(lbl_humi, "");
-    lv_obj_set_pos(lbl_humi, 30, 53);
+    lv_obj_set_pos(lbl_humi, 30, 68);
     lv_obj_add_flag(lbl_humi, LV_OBJ_FLAG_HIDDEN);
 
     // Big time: the star of the screen (~40% of height). Centered now that the
