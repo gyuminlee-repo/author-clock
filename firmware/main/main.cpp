@@ -156,6 +156,7 @@ extern "C" void app_main(void) {
             if (lt.tm_min != last_min) {
                 last_min = lt.tm_min;
                 ui_set_time_text(lt.tm_hour, lt.tm_min);
+                ui_set_date_text(lt.tm_mon + 1, lt.tm_mday, lt.tm_wday);
                 quote_t q;
                 if (quote_for_minute(lt.tm_hour, lt.tm_min, &q))
                     ui_set_quote(&q);

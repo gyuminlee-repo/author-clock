@@ -38,6 +38,7 @@ static lv_obj_t *scr_cal;
 
 // Clock widgets
 static lv_obj_t *lbl_time;      // big HH:MM
+static lv_obj_t *lbl_date;      // date + weekday, under the clock (normal mode)
 static lv_obj_t *top_icon;      // top-right pool sprite, one per minute
 static lv_obj_t *canvas_quote;  // quote body, drawn with inline inverted highlight
 static uint8_t  *canvas_buf;    // RGB565 canvas backing buffer (PSRAM)
@@ -284,6 +285,8 @@ static void apply_clock_layout(bool compact) {
         lv_obj_align(canvas_quote, LV_ALIGN_TOP_MID, 0, QUOTE_TOP_C);
         lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
         lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -4);
+        // No room under the shrunk time: the compact quote box starts at 58.
+        lv_obj_add_flag(lbl_date, LV_OBJ_FLAG_HIDDEN);
     } else {
         // 96px "00:00" (~225px max) centered: left/right margins ~88px each,
         // clearing the top-left env block (ends x84) and the top-right 72px cat
@@ -295,6 +298,8 @@ static void apply_clock_layout(bool compact) {
         // auto-fit-shrunk quote body.
         lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
         lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -6);
+        lv_obj_remove_flag(lbl_date, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 96);
     }
 }
 
@@ -392,6 +397,15 @@ static void build_clock_screen(void) {
     lv_label_set_text(lbl_time, "00:00");
     lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 20);
 
+    // Date + weekday in the gap under the 96px clock (normal mode only; compact
+    // mode hides it, see apply_clock_layout). font_ko_22 sits between the big
+    // time above and the quote box (QUOTE_TOP_N=132) below.
+    lbl_date = lv_label_create(scr_clock);
+    lv_obj_set_style_text_font(lbl_date, &font_ko_22, 0);
+    lv_obj_set_style_text_color(lbl_date, lv_color_black(), 0);
+    lv_label_set_text(lbl_date, "");
+    lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 96);
+
     // Quote canvas: one fixed RGB565 canvas (compact box size). Auto-fit font
     // and inline highlight are handled per quote in ui_set_quote. Created
     // BEFORE the source label so the source stays on top where the canvas
@@ -455,6 +469,15 @@ void ui_set_time_text(int hour, int minute) {
     char buf[6];
     snprintf(buf, sizeof(buf), "%02d:%02d", hour, minute);
     lv_label_set_text(lbl_time, buf);
+}
+
+// Date line under the clock: "M월 D일 (요일)". wday is 0=Sun..6=Sat. Only shown
+// in normal mode; apply_clock_layout hides the label in compact mode.
+void ui_set_date_text(int mon, int mday, int wday) {
+    if (wday < 0 || wday > 6) wday = 0;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d월 %d일 (%s)", mon, mday, WDAY_KO[wday]);
+    lv_label_set_text(lbl_date, buf);
 }
 
 // Shuffle bag over the icon pool: deal the pool in a random order, one sprite

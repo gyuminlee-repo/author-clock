@@ -18,6 +18,9 @@ void ui_start_button_task(void);
 // Cheap per-second update: just the big HH:MM digits.
 void ui_set_time_text(int hour, int minute);
 
+// Date line under the clock: month, day-of-month, weekday (0=Sun..6=Sat).
+void ui_set_date_text(int mon, int mday, int wday);
+
 // Per-minute update: swap the top-right sprite to the next one from the icon
 // pool shuffle bag. Call under the LVGL lock alongside the quote update.
 void ui_next_top_icon(void);
