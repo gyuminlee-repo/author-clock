@@ -65,9 +65,35 @@ def collect_pngs():
     return paths
 
 
+def ink_mask(rgba):
+    """1-bit ink mask (255 = ink) at the native size: pixels that are opaque
+    enough and dark enough. Composite over white so transparent areas never
+    count as ink."""
+    alpha = rgba.getchannel("A")
+    white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    body = Image.alpha_composite(white, rgba).convert("L")
+    ap = list(alpha.getdata())
+    bp = list(body.getdata())            # 0 = black .. 255 = white
+    mask = Image.new("L", rgba.size, 0)
+    mask.putdata([255 if (ap[i] >= ALPHA_CUT and bp[i] < THRESH) else 0
+                  for i in range(len(ap))])
+    return mask
+
+
 def render_alpha(path):
-    """Return a TARGET*TARGET list of 0/255 alpha bytes for one sprite."""
-    im = Image.open(path).convert("RGBA")
+    """Return a TARGET*TARGET list of 0/255 alpha bytes for one sprite.
+
+    Crop to the ink bounding box first so every sprite fills the box to the
+    same extent (uniform apparent size regardless of native padding), then fit
+    into the TARGET box with a single scale factor for both axes so the aspect
+    ratio is preserved (never squash one axis)."""
+    im = Image.open(path)
+    im.seek(0)
+    im = im.convert("RGBA")
+    bbox = ink_mask(im).getbbox()
+    if bbox:
+        im = im.crop(bbox)
+
     w, h = im.size
     scale = TARGET / float(max(w, h))
     nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
@@ -78,16 +104,8 @@ def render_alpha(path):
     canvas = Image.new("RGBA", (TARGET, TARGET), (255, 255, 255, 0))
     canvas.paste(im, ((TARGET - nw) // 2, (TARGET - nh) // 2), im)
 
-    alpha = canvas.getchannel("A")
-    # Composite over white so transparent areas become paper (never inked),
-    # then threshold the visible body to 1-bit.
-    white = Image.new("RGBA", canvas.size, (255, 255, 255, 255))
-    body = Image.alpha_composite(white, canvas).convert("L")
-
-    ap = list(alpha.getdata())
-    bp = list(body.getdata())            # 0 = black .. 255 = white
-    return [255 if (ap[i] >= ALPHA_CUT and bp[i] < THRESH) else 0
-            for i in range(TARGET * TARGET)]
+    mp = list(ink_mask(canvas).getdata())
+    return [255 if mp[i] else 0 for i in range(TARGET * TARGET)]
 
 
 def main():
