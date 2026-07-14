@@ -589,13 +589,14 @@ void ui_set_battery(int percent, bool plugged, bool valid) {
         return;
     }
     if (plugged) {
-        // USB feeding (V>=4.2): show the USB glyph alone. The percent is
-        // meaningless while charging, so the label is cleared and hidden.
+        // USB feeding: the plugged state is latched by voltage hysteresis in
+        // adc_battery.cpp (on >=4.05V, off <3.95V). Show the USB glyph alone;
+        // the percent is meaningless while charging, so hide the label.
         lv_image_set_src(batt_img, &usb_icon);
         lv_label_set_text(lbl_batt, "");
         lv_obj_add_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
     } else {
-        // Discharging (3.0 <= V < 4.2): battery glyph + percent.
+        // Discharging (voltage below the hysteresis window): battery + percent.
         lv_image_set_src(batt_img, &batt_icon);
         char b[16];
         snprintf(b, sizeof(b), "%d%%", percent);
