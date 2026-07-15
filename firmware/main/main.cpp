@@ -8,6 +8,7 @@
 #include <nvs_flash.h>
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <esp_system.h>
 
 #include "display_st7305.h"
 #include "lvgl_port.h"
@@ -43,16 +44,18 @@ static void Lvgl_FlushCallback(lv_display_t *disp, const lv_area_t *area, uint8_
 }
 
 static void net_time_task(void *arg) {
-    // Bounded NTP window: try for up to NET_TIME_MAX_TRY_SEC after boot. A
-    // successful sync ends the task early and leaves the radio up so lwip SNTP
-    // keeps the clock refreshed. If the window closes without a sync (or there
-    // is no WIFI_SSID to retry), stop the radio and end the task so an always-on
-    // desk clock does not hold WiFi up forever. Each net_time_sync call blocks
-    // up to ~45s, so a few attempts fit inside the window at 30s spacing.
+    // Bounded NTP window: try for up to NET_TIME_MAX_TRY_SEC after boot. On a
+    // successful sync, turn the radio OFF too: WiFi left on draws ~30-80mA
+    // continuously, which drained the battery overnight. The PCF85063 RTC holds
+    // the time between reboots (and the next boot re-syncs if a network is up),
+    // so continuous SNTP is not worth doubling the current draw. Each
+    // net_time_sync call blocks up to ~45s, so a few attempts fit inside the
+    // window at 30s spacing.
     int64_t start = esp_timer_get_time();
     const int64_t budget_us = (int64_t)NET_TIME_MAX_TRY_SEC * 1000000;
     while ((esp_timer_get_time() - start) < budget_us) {
-        if (net_time_sync()) {             // synced from NTP; SNTP takes over
+        if (net_time_sync()) {             // synced from NTP; RTC now holds time
+            net_time_shutdown();           // radio off: WiFi idle is the big drain
             vTaskDelete(NULL);
             return;
         }
@@ -67,7 +70,27 @@ static void net_time_task(void *arg) {
     vTaskDelete(NULL);
 }
 
+// Human-readable reset cause, logged at boot so a mystery power-off can be
+// classified next time: BROWNOUT means the battery voltage sagged (power),
+// TASK_WDT/INT_WDT/PANIC mean a firmware crash, POWERON means a clean start.
+static const char *reset_reason_str(esp_reset_reason_t r) {
+    switch (r) {
+        case ESP_RST_POWERON:  return "POWERON";
+        case ESP_RST_SW:       return "SW";
+        case ESP_RST_PANIC:    return "PANIC(crash)";
+        case ESP_RST_INT_WDT:  return "INT_WDT(hang)";
+        case ESP_RST_TASK_WDT: return "TASK_WDT(hang)";
+        case ESP_RST_WDT:      return "WDT(hang)";
+        case ESP_RST_BROWNOUT: return "BROWNOUT(voltage sag)";
+        case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+        default:               return "OTHER";
+    }
+}
+
 extern "C" void app_main(void) {
+    esp_reset_reason_t rr = esp_reset_reason();
+    ESP_LOGW(TAG, "boot: reset reason = %s", reset_reason_str(rr));
+
     // 1. NVS (WiFi needs it)
     esp_err_t nvs = nvs_flash_init();
     if (nvs == ESP_ERR_NVS_NO_FREE_PAGES || nvs == ESP_ERR_NVS_NEW_VERSION_FOUND) {
