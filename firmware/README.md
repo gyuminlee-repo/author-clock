@@ -46,22 +46,20 @@ cp font_ko_28.c font_ko_44.c font_digits_96.c ../main/
 ### 1-b. 우상단 아이콘 풀 생성
 
 우상단 도트 그림은 매 분 셔플백으로 한 장씩 바뀐다(풀 전체를 한 바퀴 돈 뒤에만
-재등장하므로 같은 그림이 짧은 간격으로 나오지 않는다). 풀은 두 폴더에서 모은다.
+재등장하므로 같은 그림이 짧은 간격으로 나오지 않는다).
 
 ```bash
 cd firmware/tools
-python3 make_baseline_icons.py   # 오리지널 CC0 도형 -> ../assets/pool_src/*.png
-python3 make_pool.py             # pool_src + pool_local 스캔 -> ../main/icon_pool.c
+python3 make_pool.py             # assets/pool_local 스캔 -> ../main/icon_pool.c
 ```
 
-- `assets/pool_src/`: 이 repo 자체 CC0 도형. 커밋됨. 이것만으로도 빌드 가능.
-- `assets/pool_local/`: 재배포 불가한 서드파티 스프라이트 드롭 폴더. gitignore.
-  각 PNG(투명 배경)를 넣고 `make_pool.py`를 다시 돌리면 자동 흡수된다.
+- `assets/pool_local/`: 스프라이트 드롭 폴더. gitignore. 투명 배경 PNG 를 넣고
+  `make_pool.py` 를 다시 돌리면 자동 흡수된다(하위 폴더는 스캔 안 함).
 - `main/icon_pool.c`: 생성물. 로컬 아트를 담을 수 있어 gitignore(폰트와 동일 정책).
 
-`make_pool.py`, `make_baseline_icons.py`는 커밋된다. `pool_local/`과 `icon_pool.c`는
-저작권 아트를 공개 repo에 올리지 않으려고 gitignore한다. 서드파티 스프라이트는 각자
-기기용으로만 로컬에 두고, 라이선스는 본인 책임으로 확인한다.
+`make_pool.py` 는 커밋된다. `pool_local/` 과 `icon_pool.c` 는 저작권 아트를 공개 repo 에
+올리지 않으려고 gitignore 한다. 서드파티 스프라이트는 각자 기기용으로만 로컬에 두고,
+라이선스는 본인 책임으로 확인한다.
 
 ### 2. WiFi 크리덴셜
 

@@ -32,7 +32,7 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/icon_pool.c")
     list(APPEND app_srcs "icon_pool.c")
 else()
     message(FATAL_ERROR
-        "Missing generated icon_pool.c. Run: cd firmware/tools && python3 make_baseline_icons.py && python3 make_pool.py")
+        "Missing generated icon_pool.c. Drop PNGs into firmware/assets/pool_local, then run: cd firmware/tools && python3 make_pool.py")
 endif()
 
 idf_component_register(

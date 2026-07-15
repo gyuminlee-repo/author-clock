@@ -433,14 +433,11 @@ static void build_clock_screen(void) {
     lv_label_set_text(lbl_source, "");
     lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -6);
 
-    // Sync toast: a wifi icon + one-line status text on an opaque white pill at
-    // BOTTOM_MID -32 (its 20px row spans screen y ~249..268). That band sits
-    // INSIDE the quote canvas' drawn box (normal reaches y272, compact y275),
-    // so an opaque white background is required to occlude any quote text under
-    // it for the toast' 4s life; a bare label/A8 icon would let text bleed
-    // through. It clears the source label (top ~y275) below and the top-left
-    // env block (y<=52) above. A flex row (LVGL9) centers icon + text and
-    // content-sizes the pill; created LAST so it draws over the canvas.
+    // Sync toast: a wifi icon + one-line status text on an opaque white pill,
+    // centered dead in the middle of the screen for the toast' ~4s life. The
+    // opaque white background occludes the time/quote it briefly covers; a bare
+    // label/A8 icon would let content bleed through. A flex row (LVGL9) centers
+    // icon + text and content-sizes the pill; created LAST so it draws on top.
     sync_toast = lv_obj_create(scr_clock);
     lv_obj_set_style_bg_color(sync_toast, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(sync_toast, LV_OPA_COVER, 0);
@@ -452,7 +449,7 @@ static void build_clock_screen(void) {
     lv_obj_set_flex_flow(sync_toast, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(sync_toast, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_align(sync_toast, LV_ALIGN_BOTTOM_MID, 0, -32);
+    lv_obj_align(sync_toast, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(sync_toast, LV_OBJ_FLAG_HIDDEN);
 
     wifi_img = lv_image_create(sync_toast);
