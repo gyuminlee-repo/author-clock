@@ -181,11 +181,12 @@ void DisplayPort::RLCD_ColorClear(uint8_t color) {
 }
 
 void DisplayPort::RLCD_Display() {
-    // HPM (32Hz) for a fast, clean GRAM update, then drop back to LPM (1Hz
-    // self-refresh) which holds the static clock image at ~1mA instead of the
-    // ~5mA HPM idle. Frame rate + EQ for both modes are set once in init, so
-    // the switch is a single command. The panel updates once per minute, so the
-    // brief HPM window is negligible.
+    // Keep the panel in HPM (High Power Mode) for every update and do NOT drop
+    // to LPM afterward. The LPM (0x39) self-refresh added in v0.05.06.00 held
+    // the image at ~1mA, but the reflective panel intermittently locked up in
+    // that self-refresh state: the image froze while the CPU kept running, and
+    // only a full power cycle (not a GPIO reset) recovered it. HPM idles at
+    // ~5mA (a few mA more) but stays reliable. Frame rate + EQ are set in init.
     RLCD_SendCommand(0x38);   // High Power Mode ON
 
     RLCD_SendCommand(0x2A);   // Column Address Set
@@ -199,8 +200,6 @@ void DisplayPort::RLCD_Display() {
     RLCD_SendCommand(0x2C);   // Memory write
 
     RLCD_Sendbuffera(DispBuffer, DisplayLen);
-
-    RLCD_SendCommand(0x39);   // Low Power Mode ON (holds image at ~1mA)
 }
 
 void DisplayPort::RLCD_Reset(void) {
