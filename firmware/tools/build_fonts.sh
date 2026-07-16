@@ -7,29 +7,18 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Pretendard is SIL OFL 1.1 (redistributable), same license family as the
-# previous Nanum Myeongjo. Downloaded as a release zip; the regular static TTF
-# is extracted from it.
-FONT_ZIP_URL="https://github.com/orioncactus/pretendard/releases/download/v1.3.9/Pretendard-1.3.9.zip"
-FONT_ZIP="Pretendard-1.3.9.zip"
-SRC_TTF="Pretendard-Regular.ttf"        # SIL OFL, redistributable
-SUBSET_TTF="Pretendard-subset.ttf"
+# BookkMyungjo (Bukk Myeongjo), a Korean Myeongjo serif by BOOKK, free for
+# personal and commercial use. The vendor page is JS-gated, so this pulls the
+# TTF from the community fonts-archive mirror. NOTE: unlike the SIL OFL fonts
+# used before (Pretendard, Nanum Myeongjo), BookkMyungjo grants commercial
+# embedding but not explicit modification; the subset + bitmap conversion below
+# is treated as personal-device use. Confirm the license before redistributing.
+FONT_TTF_URL="https://raw.githubusercontent.com/fonts-archive/BookkMyungjo/main/BookkMyungjo-Bold.ttf"
+SRC_TTF="BookkMyungjo-Bold.ttf"
+SUBSET_TTF="BookkMyungjo-subset.ttf"
 GLYPHS="../data/glyphs.txt"
 
-# Fetch + extract the regular static TTF from the release zip. The in-zip path
-# is discovered at runtime instead of hardcoded.
-if [ ! -f "$SRC_TTF" ]; then
-  [ -f "$FONT_ZIP" ] || curl -sL -o "$FONT_ZIP" "$FONT_ZIP_URL"
-  python3 -c "
-import zipfile, shutil
-z = zipfile.ZipFile('$FONT_ZIP')
-cands = [n for n in z.namelist() if n.endswith('Pretendard-Regular.ttf')]
-assert cands, 'Pretendard-Regular.ttf not found in $FONT_ZIP'
-with z.open(cands[0]) as s, open('$SRC_TTF', 'wb') as d:
-    shutil.copyfileobj(s, d)
-print('extracted', cands[0])
-"
-fi
+[ -f "$SRC_TTF" ] || curl -sL -o "$SRC_TTF" "$FONT_TTF_URL"
 
 pyftsubset "$SRC_TTF" --text-file="$GLYPHS" --output-file="$SUBSET_TTF" \
   --layout-features='' --no-hinting --desubroutinize
