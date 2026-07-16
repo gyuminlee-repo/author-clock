@@ -32,6 +32,18 @@ void net_time_set_fail(void);
 // desk clock from holding WiFi up indefinitely when NTP never succeeds.
 #define NET_TIME_MAX_TRY_SEC 300
 
+// Manual-resync window (KEY calendar->clock): shorter than boot since the user
+// has just turned the hotspot on and expects a quick sync then radio-off.
+#define NET_TIME_RESYNC_SEC 60
+
+// Start the single sync task: it runs the boot NTP window, then blocks waiting
+// for net_time_resync() requests. Call once from app_main.
+void net_time_start(void);
+
+// Request a one-off WiFi resync (radio up -> NTP -> radio off). Triggered by the
+// KEY button on the calendar->clock transition. No-op if unconfigured.
+void net_time_resync(void);
+
 // Bring up WiFi STA, run SNTP against pool.ntp.org in KST, and on success set
 // the system clock and persist it to the PCF85063. On any failure the system
 // clock is restored from the RTC and the device keeps running.

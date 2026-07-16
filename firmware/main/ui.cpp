@@ -12,6 +12,7 @@
 #include "lvgl_port.h"
 #include "ui.h"
 #include "icon_pool.h"
+#include "net_time.h"
 #include "user_config.h"
 
 // Fonts and icon are compiled into the binary (see main/CMakeLists.txt).
@@ -469,6 +470,7 @@ void ui_set_time_text(int hour, int minute) {
     lv_label_set_text(lbl_time, buf);
 }
 
+
 // Date line under the clock: "M월 D일 (요일)". wday is 0=Sun..6=Sat. Only shown
 // in normal mode; apply_clock_layout hides the label in compact mode.
 void ui_set_date_text(int mon, int mday, int wday) {
@@ -768,10 +770,15 @@ static void button_task(void *arg) {
         if (last == 1 && lvl == 0) {          // press edge
             vTaskDelay(pdMS_TO_TICKS(50));     // debounce
             if (gpio_get_level((gpio_num_t)KEY_BUTTON_PIN) == 0) {
+                bool was_cal = showing_calendar;
                 if (Lvgl_lock(-1)) {
                     show_screen(!showing_calendar);
                     Lvgl_unlock();
                 }
+                // Calendar -> clock triggers a one-off WiFi resync so the user
+                // can turn the hotspot on, tap back to the clock, and re-sync
+                // time on demand without a reboot (radio then turns off).
+                if (was_cal) net_time_resync();
                 // wait for release
                 while (gpio_get_level((gpio_num_t)KEY_BUTTON_PIN) == 0) {
                     vTaskDelay(pdMS_TO_TICKS(20));

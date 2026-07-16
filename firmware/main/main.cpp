@@ -6,6 +6,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nvs_flash.h>
+#include <nvs.h>
+#include <string.h>
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <esp_system.h>
@@ -43,33 +45,6 @@ static void Lvgl_FlushCallback(lv_display_t *disp, const lv_area_t *area, uint8_
     lv_display_flush_ready(disp);
 }
 
-static void net_time_task(void *arg) {
-    // Bounded NTP window: try for up to NET_TIME_MAX_TRY_SEC after boot. On a
-    // successful sync, turn the radio OFF too: WiFi left on draws ~30-80mA
-    // continuously, which drained the battery overnight. The PCF85063 RTC holds
-    // the time between reboots (and the next boot re-syncs if a network is up),
-    // so continuous SNTP is not worth doubling the current draw. Each
-    // net_time_sync call blocks up to ~45s, so a few attempts fit inside the
-    // window at 30s spacing.
-    int64_t start = esp_timer_get_time();
-    const int64_t budget_us = (int64_t)NET_TIME_MAX_TRY_SEC * 1000000;
-    while ((esp_timer_get_time() - start) < budget_us) {
-        if (net_time_sync()) {             // synced from NTP; RTC now holds time
-            net_time_shutdown();           // radio off: WiFi idle is the big drain
-            vTaskDelete(NULL);
-            return;
-        }
-        if (!net_time_wifi_configured())   // RTC-only, retrying is pointless
-            break;
-        vTaskDelay(pdMS_TO_TICKS(30 * 1000));
-    }
-    // Reached only when the window closed (or RTC-only broke out) without a
-    // sync; set_status keeps a real OK from being clobbered here.
-    net_time_set_fail();
-    net_time_shutdown();                    // window closed or RTC-only: radio off
-    vTaskDelete(NULL);
-}
-
 // Human-readable reset cause, logged at boot so a mystery power-off can be
 // classified next time: BROWNOUT means the battery voltage sagged (power),
 // TASK_WDT/INT_WDT/PANIC mean a firmware crash, POWERON means a clean start.
@@ -87,6 +62,46 @@ static const char *reset_reason_str(esp_reset_reason_t r) {
     }
 }
 
+// Persistent "black box" in NVS: the last battery voltage and uptime survive a
+// power-off, so an on-battery death (which leaves no serial trace) can be read
+// on the next boot. Low batt_min => the cell sagged (brownout); a high value at
+// death => the battery was fine and the cause is elsewhere.
+typedef struct {
+    uint32_t boot_count;
+    uint32_t last_uptime_s;
+    uint16_t last_batt_mv;
+    uint16_t min_batt_mv;
+} blackbox_t;
+
+static nvs_handle_t s_bb = 0;
+static blackbox_t s_bb_data;
+
+static void blackbox_load_and_log(esp_reset_reason_t rr) {
+    if (nvs_open("blackbox", NVS_READWRITE, &s_bb) != ESP_OK) return;
+    size_t sz = sizeof(s_bb_data);
+    if (nvs_get_blob(s_bb, "d", &s_bb_data, &sz) != ESP_OK || sz != sizeof(s_bb_data)) {
+        memset(&s_bb_data, 0, sizeof(s_bb_data));
+        s_bb_data.min_batt_mv = 0xFFFF;
+    }
+    ESP_LOGW(TAG, "BLACKBOX prev run: boot#%lu ran=%lus batt_last=%umV batt_min=%umV | this reset=%s",
+             (unsigned long)s_bb_data.boot_count, (unsigned long)s_bb_data.last_uptime_s,
+             (unsigned)s_bb_data.last_batt_mv, (unsigned)s_bb_data.min_batt_mv,
+             reset_reason_str(rr));
+    s_bb_data.boot_count++;
+    s_bb_data.last_uptime_s = 0;
+    s_bb_data.last_batt_mv = 0;
+    s_bb_data.min_batt_mv = 0xFFFF;      // per-run minimum
+}
+
+static void blackbox_save(uint32_t uptime_s, uint16_t batt_mv) {
+    if (!s_bb) return;
+    s_bb_data.last_uptime_s = uptime_s;
+    s_bb_data.last_batt_mv = batt_mv;
+    if (batt_mv && batt_mv < s_bb_data.min_batt_mv) s_bb_data.min_batt_mv = batt_mv;
+    nvs_set_blob(s_bb, "d", &s_bb_data, sizeof(s_bb_data));
+    nvs_commit(s_bb);
+}
+
 extern "C" void app_main(void) {
     esp_reset_reason_t rr = esp_reset_reason();
     ESP_LOGW(TAG, "boot: reset reason = %s", reset_reason_str(rr));
@@ -97,6 +112,7 @@ extern "C" void app_main(void) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
+    blackbox_load_and_log(rr);
 
     // Timezone first, unconditionally: every later time path (RTC seed, NTP,
     // the render loop) must interpret wall time as KST even when RTC or WiFi
@@ -157,7 +173,7 @@ extern "C" void app_main(void) {
     ui_start_button_task();
 
     // 5. WiFi/NTP asynchronously (never blocks the clock).
-    xTaskCreatePinnedToCore(net_time_task, "nettime", 5 * 1024, NULL, 4, NULL, 0);
+    net_time_start();   // boot NTP window, then waits for KEY-triggered resyncs
 
     // 6. Update loop: HH:MM every second, quote + calendar on minute change,
     // temperature/humidity every 30s.
@@ -166,8 +182,8 @@ extern "C" void app_main(void) {
     // Sync toast latch: show once on the first OK/FAIL transition, auto-hide
     // after 4 ticks (~4s), then never again. tick counts loop iterations (1s).
     int tick = 0;
-    int toast_shown_tick = -1;   // -1 until shown
-    bool toast_done = false;     // true after it has hidden (one-shot)
+    net_sync_state_t last_st = NET_SYNC_NONE;  // edge-trigger the toast
+    int toast_hide_tick = -1;                  // >=0 while a toast is showing
     for (;;) {
         time_t now = time(NULL);
         struct tm lt;
@@ -207,38 +223,46 @@ extern "C" void app_main(void) {
             // needs no LVGL lock (independent peripheral), so read it outside
             // the lock and only the ui_set_battery label update touches LVGL. A
             // failed read passes valid=false, which hides row 3 until recovery.
+            float bv = 0.0f;
             int bpct = 0;
             bool bcharging = false;
-            bool bok = battery_read(NULL, &bpct, &bcharging);
+            bool bok = battery_read(&bv, &bpct, &bcharging);
             if (Lvgl_lock(-1)) {
                 ui_set_env(tc, hp);
                 ui_set_battery(bpct, bcharging, bok);
                 Lvgl_unlock();
             }
+            // Black box: persist uptime + battery voltage so an on-battery death
+            // is readable next boot. Also log heap to rule OOM back in if needed.
+            blackbox_save((uint32_t)(esp_timer_get_time() / 1000000),
+                          bok ? (uint16_t)(bv * 1000.0f) : 0);
+            ESP_LOGW(TAG, "MEM heap=%lu min=%lu | batt=%umV",
+                     (unsigned long)esp_get_free_heap_size(),
+                     (unsigned long)esp_get_minimum_free_heap_size(),
+                     bok ? (unsigned)(bv * 1000.0f) : 0);
         }
 
-        // Sync toast: poll the net_time state. On the first OK/FAIL transition
-        // show it and stamp the tick; 4 ticks later hide it and latch off so it
-        // shows exactly once. UI calls take the LVGL lock like the rest of the
-        // loop.
-        if (!toast_done) {
-            net_sync_state_t st = net_time_get_status();
-            if (toast_shown_tick < 0) {
-                if (st == NET_SYNC_OK || st == NET_SYNC_FAIL) {
-                    if (Lvgl_lock(-1)) {
-                        ui_show_sync_toast(st == NET_SYNC_OK);
-                        Lvgl_unlock();
-                    }
-                    toast_shown_tick = tick;
-                }
-            } else if (tick - toast_shown_tick >= 4) {
-                if (Lvgl_lock(-1)) {
-                    ui_hide_sync_toast();
-                    Lvgl_unlock();
-                }
-                toast_done = true;
+        // Sync toast: show whenever the sync state settles into OK/FAIL. This
+        // covers the boot sync AND a KEY-triggered resync (which sets the state
+        // back to TRYING first), so it is edge-triggered on the TRYING->OK/FAIL
+        // transition and auto-hidden ~4 ticks later. UI calls take the LVGL lock.
+        net_sync_state_t st = net_time_get_status();
+        if ((st == NET_SYNC_OK || st == NET_SYNC_FAIL) &&
+            (last_st == NET_SYNC_TRYING || last_st == NET_SYNC_NONE)) {
+            if (Lvgl_lock(-1)) {
+                ui_show_sync_toast(st == NET_SYNC_OK);
+                Lvgl_unlock();
             }
+            toast_hide_tick = tick + 4;
         }
+        if (toast_hide_tick >= 0 && tick >= toast_hide_tick) {
+            if (Lvgl_lock(-1)) {
+                ui_hide_sync_toast();
+                Lvgl_unlock();
+            }
+            toast_hide_tick = -1;
+        }
+        last_st = st;
 
         tick++;
         vTaskDelay(pdMS_TO_TICKS(1000));

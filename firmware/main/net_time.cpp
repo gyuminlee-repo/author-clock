@@ -3,7 +3,9 @@
 #include <time.h>
 #include <sys/time.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <freertos/event_groups.h>
+#include <esp_timer.h>
 #include <esp_wifi.h>
 #include <esp_event.h>
 #include <esp_netif.h>
@@ -141,6 +143,15 @@ bool net_time_sync(void) {
         ESP_ERROR_CHECK(esp_wifi_start());   // STA_START handler calls esp_wifi_connect()
         s_wifi_inited = true;
         s_wifi_started = true;
+    } else if (!s_wifi_started) {
+        // Radio was stopped by net_time_shutdown (e.g. after a prior sync); the
+        // netif/handlers/config are still set up, so just restart the radio and
+        // the STA_START handler reconnects. This is the manual-resync path.
+        s_retry = 0;
+        xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+        ESP_LOGI(TAG, "restarting wifi for resync");
+        ESP_ERROR_CHECK(esp_wifi_start());
+        s_wifi_started = true;
     } else {
         s_retry = 0;
         xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
@@ -197,4 +208,40 @@ bool net_time_sync(void) {
     }
     set_status(NET_SYNC_OK);
     return true;
+}
+
+// ---- Unified sync task -----------------------------------------------------
+// One task serializes all WiFi bring-up/teardown so the boot sync and manual
+// resyncs never overlap (net_time_sync uses non-reentrant statics). It does the
+// boot window, then blocks on a task notification and runs a short window each
+// time net_time_resync() is called (KEY calendar->clock).
+static TaskHandle_t s_net_task = NULL;
+
+static void sync_window(int secs) {
+    int64_t start = esp_timer_get_time();
+    bool ok = false;
+    while ((esp_timer_get_time() - start) < (int64_t)secs * 1000000) {
+        if (net_time_sync()) { ok = true; break; }
+        if (!net_time_wifi_configured()) break;      // no creds: retry is pointless
+        vTaskDelay(pdMS_TO_TICKS(secs >= 120 ? 30000 : 8000));
+    }
+    if (!ok) net_time_set_fail();
+    net_time_shutdown();                             // release the radio (battery)
+}
+
+static void net_task(void *arg) {
+    sync_window(NET_TIME_MAX_TRY_SEC);               // boot sync window
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);     // wait for a resync request
+        sync_window(NET_TIME_RESYNC_SEC);
+    }
+}
+
+void net_time_start(void) {
+    if (s_net_task) return;
+    xTaskCreatePinnedToCore(net_task, "nettime", 5 * 1024, NULL, 4, &s_net_task, 0);
+}
+
+void net_time_resync(void) {
+    if (s_net_task && net_time_wifi_configured()) xTaskNotifyGive(s_net_task);
 }
