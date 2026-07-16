@@ -62,10 +62,12 @@ static const char *reset_reason_str(esp_reset_reason_t r) {
     }
 }
 
-// Persistent "black box" in NVS: the last battery voltage and uptime survive a
-// power-off, so an on-battery death (which leaves no serial trace) can be read
-// on the next boot. Low batt_min => the cell sagged (brownout); a high value at
-// death => the battery was fine and the cause is elsewhere.
+// Persistent "black box" in NVS. Three records survive a power-off so an
+// on-battery death (which leaves no serial trace) can be read on a later boot:
+//   "d"     live scratch of the current run (battery/uptime), saved every 30s.
+//   "hist"  ring of the last DEATH_RING completed runs, appended once per boot.
+//   "death" the last run that ended in a real crash/brownout, latched and never
+//           overwritten by clean power-ons or USB/software resets.
 typedef struct {
     uint32_t boot_count;
     uint32_t last_uptime_s;
@@ -73,24 +75,100 @@ typedef struct {
     uint16_t min_batt_mv;
 } blackbox_t;
 
+// One immutable record of a completed run, written once at the following boot.
+// reset_reason is why that run ENDED (it is the next boot's esp_reset_reason).
+typedef struct {
+    uint32_t boot_count;     // which run this describes
+    uint32_t ran_s;          // how long it lasted
+    uint16_t batt_last_mv;   // last battery voltage before it ended
+    uint16_t batt_min_mv;    // lowest battery voltage during the run
+    uint8_t  reset_reason;   // esp_reset_reason_t of the boot that followed
+    uint8_t  _pad[3];
+} run_record_t;
+
+// Rolling history of the last DEATH_RING completed runs. Appended once per boot
+// and never rewritten by the run loop, so a death stays readable across later
+// boots until DEATH_RING newer boots push it out.
+#define DEATH_RING 8
+typedef struct {
+    uint32_t count;                  // total runs ever recorded; slot = (count-1) % DEATH_RING
+    run_record_t rec[DEATH_RING];
+} death_hist_t;
+
 static nvs_handle_t s_bb = 0;
 static blackbox_t s_bb_data;
 
+// True for reset causes that mean the previous run crashed or browned out (a
+// real "death"), as opposed to a clean power-on, a software/USB reset (flashing
+// or serial-reset), or deep sleep.
+static bool is_death_reason(esp_reset_reason_t r) {
+    return r == ESP_RST_BROWNOUT || r == ESP_RST_PANIC ||
+           r == ESP_RST_INT_WDT  || r == ESP_RST_TASK_WDT || r == ESP_RST_WDT;
+}
+
 static void blackbox_load_and_log(esp_reset_reason_t rr) {
     if (nvs_open("blackbox", NVS_READWRITE, &s_bb) != ESP_OK) return;
+
+    // 1. Recover the previous run's live scratch (its final battery/uptime).
     size_t sz = sizeof(s_bb_data);
     if (nvs_get_blob(s_bb, "d", &s_bb_data, &sz) != ESP_OK || sz != sizeof(s_bb_data)) {
         memset(&s_bb_data, 0, sizeof(s_bb_data));
         s_bb_data.min_batt_mv = 0xFFFF;
     }
-    ESP_LOGW(TAG, "BLACKBOX prev run: boot#%lu ran=%lus batt_last=%umV batt_min=%umV | this reset=%s",
-             (unsigned long)s_bb_data.boot_count, (unsigned long)s_bb_data.last_uptime_s,
-             (unsigned)s_bb_data.last_batt_mv, (unsigned)s_bb_data.min_batt_mv,
-             reset_reason_str(rr));
+
+    if (s_bb_data.boot_count > 0) {
+        // 2. Fold that run + its end cause (rr) into the rolling history ring.
+        static death_hist_t hist;    // static: 132B, keep it off the small stack
+        size_t hsz = sizeof(hist);
+        if (nvs_get_blob(s_bb, "hist", &hist, &hsz) != ESP_OK || hsz != sizeof(hist)) {
+            memset(&hist, 0, sizeof(hist));
+        }
+        run_record_t r = {};
+        r.boot_count   = s_bb_data.boot_count;
+        r.ran_s        = s_bb_data.last_uptime_s;
+        r.batt_last_mv = s_bb_data.last_batt_mv;
+        r.batt_min_mv  = s_bb_data.min_batt_mv;
+        r.reset_reason = (uint8_t)rr;
+        hist.rec[hist.count % DEATH_RING] = r;
+        hist.count++;
+        nvs_set_blob(s_bb, "hist", &hist, sizeof(hist));
+
+        // 3. Dedicated death slot: overwrite only on a real crash/brownout, so
+        //    it survives any number of clean power-ons and debug resets.
+        if (is_death_reason(rr)) {
+            nvs_set_blob(s_bb, "death", &r, sizeof(r));
+        }
+        nvs_commit(s_bb);
+
+        // 4. Print the ring newest-first: one connect shows the recent history.
+        uint32_t shown = hist.count < DEATH_RING ? hist.count : DEATH_RING;
+        ESP_LOGW(TAG, "BLACKBOX history (last %lu runs, newest first):", (unsigned long)shown);
+        for (uint32_t i = 1; i <= shown; i++) {
+            run_record_t *e = &hist.rec[(hist.count - i) % DEATH_RING];
+            ESP_LOGW(TAG, "  run#%lu ran=%lus last=%umV min=%umV end=%s",
+                     (unsigned long)e->boot_count, (unsigned long)e->ran_s,
+                     (unsigned)e->batt_last_mv, (unsigned)e->batt_min_mv,
+                     reset_reason_str((esp_reset_reason_t)e->reset_reason));
+        }
+
+        // 5. Surface the latched crash/brownout death separately, if any.
+        run_record_t d = {};
+        size_t dsz = sizeof(d);
+        if (nvs_get_blob(s_bb, "death", &d, &dsz) == ESP_OK && dsz == sizeof(d)) {
+            ESP_LOGW(TAG, "BLACKBOX last DEATH: run#%lu ran=%lus last=%umV min=%umV cause=%s",
+                     (unsigned long)d.boot_count, (unsigned long)d.ran_s,
+                     (unsigned)d.batt_last_mv, (unsigned)d.batt_min_mv,
+                     reset_reason_str((esp_reset_reason_t)d.reset_reason));
+        }
+    } else {
+        ESP_LOGW(TAG, "BLACKBOX: first boot, no prior run. this reset=%s", reset_reason_str(rr));
+    }
+
+    // 6. Reset the live scratch for the new run. The loop saves "d" every 30s.
     s_bb_data.boot_count++;
     s_bb_data.last_uptime_s = 0;
     s_bb_data.last_batt_mv = 0;
-    s_bb_data.min_batt_mv = 0xFFFF;      // per-run minimum
+    s_bb_data.min_batt_mv = 0xFFFF;
 }
 
 static void blackbox_save(uint32_t uptime_s, uint16_t batt_mv) {
