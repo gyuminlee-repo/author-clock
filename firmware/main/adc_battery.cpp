@@ -24,6 +24,35 @@ static bool                      initialized = false;
 #define BATT_HIST      6
 #define BATT_RISE_V    0.015f
 
+// Resting open-circuit-voltage -> state-of-charge table for a single Li-ion
+// cell (18650). The discharge curve is strongly nonlinear (a long 3.7-3.9V
+// plateau holds most of the charge), so the vendor straight-line map is wrong
+// through the middle. This device steady load is ~1mA (reflective LCD in LPM),
+// so measured voltage sits within a few mV of the true OCV and no
+// current-sense / IR compensation is needed for the table to be accurate here.
+// Pairs are voltage-descending; percent is linearly interpolated between rows.
+typedef struct { float v; float pct; } ocv_point_t;
+static const ocv_point_t OCV_LUT[] = {
+    {4.20f, 100}, {4.13f, 95}, {4.11f, 90}, {4.08f, 85}, {4.02f, 80},
+    {3.98f, 75},  {3.95f, 70}, {3.91f, 65}, {3.87f, 60}, {3.85f, 55},
+    {3.84f, 50},  {3.82f, 45}, {3.80f, 40}, {3.79f, 35}, {3.77f, 30},
+    {3.75f, 25},  {3.73f, 20}, {3.71f, 15}, {3.69f, 10}, {3.61f, 5},
+    {3.27f, 0},
+};
+static float ocv_to_percent(float v) {
+    const int n = sizeof(OCV_LUT) / sizeof(OCV_LUT[0]);
+    if (v >= OCV_LUT[0].v)   return 100.0f;
+    if (v <= OCV_LUT[n - 1].v) return 0.0f;
+    for (int i = 0; i < n - 1; i++) {
+        float vhi = OCV_LUT[i].v, vlo = OCV_LUT[i + 1].v;
+        if (v <= vhi && v >= vlo) {
+            float t = (v - vlo) / (vhi - vlo);   // 0 at vlo, 1 at vhi
+            return OCV_LUT[i + 1].pct + t * (OCV_LUT[i].pct - OCV_LUT[i + 1].pct);
+        }
+    }
+    return 0.0f;   // unreachable: the range guards above cover every v
+}
+
 bool battery_init(void) {
     adc_oneshot_unit_init_cfg_t unit_cfg = {};
     unit_cfg.unit_id = ADC_UNIT_1;
@@ -82,12 +111,18 @@ bool battery_read(float *volts, int *percent, bool *plugged) {
     // Undo the 1/3 divider: pack V = pin mV * 0.001 * 3.
     float v = 0.001f * (float)mv * 3.0f;
 
-    float lvl = ((v - 3.0f) / 1.12f) * 100.0f;   // 3.0V=0%, 4.12V=100%
-    if (lvl < 0.0f)   lvl = 0.0f;
-    if (lvl > 100.0f) lvl = 100.0f;
+    if (volts) *volts = v;
 
-    if (volts)   *volts = v;
-    if (percent) *percent = (int)(lvl + 0.5f);
+    // Nonlinear OCV->SoC via the table, then a light EMA so a momentary sag
+    // (the brief WiFi burst on a resync) does not make the gauge jump. At the
+    // 30s read cadence a gauge that eases over ~1 min reads as steady, not
+    // laggy. The first reading seeds the filter directly. The charging
+    // heuristic below still uses the raw averaged v, so it is unaffected.
+    float lvl = ocv_to_percent(v);
+    static float lvl_ema = -1.0f;
+    if (lvl_ema < 0.0f) lvl_ema = lvl;
+    else                lvl_ema = 0.5f * lvl_ema + 0.5f * lvl;
+    if (percent) *percent = (int)(lvl_ema + 0.5f);
     // Charging detection without a VBUS/charge-status pin (this board exposes
     // none, confirmed against the Waveshare schematic and ADC example). An
     // absolute-voltage compare cannot work: a near-full cell on its own sits at
