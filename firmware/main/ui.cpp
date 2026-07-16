@@ -283,6 +283,7 @@ static void apply_clock_layout(bool compact) {
         // 44px "00:00" is ~130px wide centered (x ~135-265), clear of the
         // 72x72 cat icon at x >= 322, so the icon stays as-is.
         lv_obj_set_style_text_font(lbl_time, &font_ko_44, 0);
+        lv_obj_set_style_text_letter_space(lbl_time, 0, 0);
         lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 8);
         lv_obj_align(canvas_quote, LV_ALIGN_TOP_MID, 0, QUOTE_TOP_C);
         lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
@@ -290,10 +291,13 @@ static void apply_clock_layout(bool compact) {
         // No room under the shrunk time: the compact quote box starts at 58.
         lv_obj_add_flag(lbl_date, LV_OBJ_FLAG_HIDDEN);
     } else {
-        // 96px "00:00" (~225px max) centered: left/right margins ~88px each,
-        // clearing the top-left env block (ends x84) and the top-right 72px cat
-        // icon. The old -14 nudge is gone now that both corners are balanced.
+        // 96px "00:00" centered with ~88px margins each side, clearing the
+        // top-left env block (ends x84) and the top-right 72px icon. The
+        // Myeongjo digits are tabular and run 264px at their natural spacing,
+        // which overlaps both corners, so -10 letter spacing trims the wide
+        // side bearings back to ~224px without shrinking the glyphs.
         lv_obj_set_style_text_font(lbl_time, &font_digits_96, 0);
+        lv_obj_set_style_text_letter_space(lbl_time, -10, 0);
         lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 20);
         lv_obj_align(canvas_quote, LV_ALIGN_TOP_MID, 0, QUOTE_TOP_N);
         // Source is always the smallest font so it never looks larger than an
@@ -395,6 +399,7 @@ static void build_clock_screen(void) {
     // top-left env block and top-right cat icon balance the corners.
     lbl_time = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_time, &font_digits_96, 0);
+    lv_obj_set_style_text_letter_space(lbl_time, -10, 0);
     lv_obj_set_style_text_color(lbl_time, lv_color_black(), 0);
     lv_label_set_text(lbl_time, "00:00");
     lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 20);
