@@ -213,15 +213,15 @@ void DisplayPort::RLCD_Reset(void) {
 }
 
 void DisplayPort::RLCD_SendCommand(uint8_t Reg) {
-    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io_handle, Reg, NULL, 0));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_lcd_panel_io_tx_param(io_handle, Reg, NULL, 0));
 }
 
 void DisplayPort::RLCD_SendData(uint8_t Data) {
-    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io_handle, -1, &Data, 1));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_lcd_panel_io_tx_param(io_handle, -1, &Data, 1));
 }
 
 void DisplayPort::RLCD_Sendbuffera(uint8_t *Data, int len) {
-    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_color(io_handle, -1, Data, len));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_lcd_panel_io_tx_color(io_handle, -1, Data, len));
 }
 
 void DisplayPort::Set_ResetIOLevel(uint8_t level) {
