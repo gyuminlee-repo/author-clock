@@ -305,7 +305,7 @@ static void apply_clock_layout(bool compact) {
         lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
         lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -6);
         lv_obj_remove_flag(lbl_date, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 110);
+        lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 102);
     }
 }
 
@@ -411,7 +411,7 @@ static void build_clock_screen(void) {
     lv_obj_set_style_text_font(lbl_date, &font_ko_22, 0);
     lv_obj_set_style_text_color(lbl_date, lv_color_black(), 0);
     lv_label_set_text(lbl_date, "");
-    lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 110);
+    lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 102);
 
     // Quote canvas: one fixed RGB565 canvas (compact box size). Auto-fit font
     // and inline highlight are handled per quote in ui_set_quote. Created
