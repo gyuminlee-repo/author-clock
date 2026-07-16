@@ -298,14 +298,14 @@ static void apply_clock_layout(bool compact) {
         // side bearings back to ~224px without shrinking the glyphs.
         lv_obj_set_style_text_font(lbl_time, &font_digits_96, 0);
         lv_obj_set_style_text_letter_space(lbl_time, -10, 0);
-        lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 20);
+        lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 8);
         lv_obj_align(canvas_quote, LV_ALIGN_TOP_MID, 0, QUOTE_TOP_N);
         // Source is always the smallest font so it never looks larger than an
         // auto-fit-shrunk quote body.
         lv_obj_set_style_text_font(lbl_source, &font_ko_18, 0);
         lv_obj_align(lbl_source, LV_ALIGN_BOTTOM_MID, 0, -6);
         lv_obj_remove_flag(lbl_date, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 96);
+        lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 110);
     }
 }
 
@@ -324,21 +324,21 @@ static void build_clock_screen(void) {
     // shuffle bag in ui_next_top_icon. The cat is only the boot placeholder
     // shown for the ~1s before the first minute tick swaps in a pool sprite.
     // Vertically center the icon on the big clock instead of floating it at the
-    // top: the clock label sits at TOP_MID y=20 (normal mode), so its center is
-    // at 20 + line_height/2; place the 72px icon so its center matches.
+    // top: the clock label sits at TOP_MID y=8 (normal mode), so its center is
+    // at 8 + line_height/2; place the 72px icon so its center matches.
     top_icon = lv_image_create(scr_clock);
     lv_image_set_src(top_icon, &cat_icon);
     lv_obj_set_style_image_recolor(top_icon, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(top_icon, LV_OPA_COVER, 0);
-    int32_t clock_cy = 20 + lv_font_get_line_height(&font_digits_96) / 2;
+    int32_t clock_cy = 8 + lv_font_get_line_height(&font_digits_96) / 2;
     lv_obj_set_pos(top_icon, LCD_WIDTH - 72 - 6, clock_cy - 72 / 2);
 
     // Top-left environment readout, mirroring the top-right cat icon. Three
     // rows of [20x20 icon at x=6] + [font_ko_18 value at x=30], battery on top:
-    //   row 1 y=8..28   battery/USB + charge %   ("83%")
-    //   row 2 y=30..50  thermometer + temperature ("23.4°C")
-    //   row 3 y=52..72  water drop  + humidity    ("45%")
-    // The block now spans x 6..84, y 8..72. Overlap check: the centered 96px
+    //   row 1 y=11..31  battery/USB + charge %   ("83%")
+    //   row 2 y=33..53  thermometer + temperature ("23.4°C")
+    //   row 3 y=55..75  water drop  + humidity    ("45%")
+    // The block now spans x 6..84, y 11..75. Overlap check: the centered 96px
     // clock has a left edge near x88 (clear), and the normal quote canvas
     // starts at QUOTE_TOP_N=132 (clear). Compact mode is the exception: its
     // quote canvas starts at QUOTE_TOP_C=58 and, being created after these env
@@ -354,45 +354,45 @@ static void build_clock_screen(void) {
     lv_image_set_src(batt_img, &batt_icon);
     lv_obj_set_style_image_recolor(batt_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(batt_img, LV_OPA_COVER, 0);
-    // The three env rows are shifted down together so the block center (row 2,
-    // temperature) lines up with the big clock center, matching the top-right
-    // icon. Rows were at y 8/30/52 (center 40); +15 puts the center near 55.
-    lv_obj_set_pos(batt_img, 6, 23);
+    // The three env rows move together with the clock so the block keeps its
+    // offset from the big digits, matching the top-right icon. Rows sit at
+    // y 11/33/55, raised 12px alongside the clock when it moved to y=8.
+    lv_obj_set_pos(batt_img, 6, 11);
     lv_obj_add_flag(batt_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_batt = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_batt, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_batt, lv_color_black(), 0);
     lv_label_set_text(lbl_batt, "");
-    lv_obj_set_pos(lbl_batt, 30, 24);
+    lv_obj_set_pos(lbl_batt, 30, 12);
     lv_obj_add_flag(lbl_batt, LV_OBJ_FLAG_HIDDEN);
 
     therm_img = lv_image_create(scr_clock);
     lv_image_set_src(therm_img, &therm_icon);
     lv_obj_set_style_image_recolor(therm_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(therm_img, LV_OPA_COVER, 0);
-    lv_obj_set_pos(therm_img, 6, 45);
+    lv_obj_set_pos(therm_img, 6, 33);
     lv_obj_add_flag(therm_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_temp = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_temp, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_temp, lv_color_black(), 0);
     lv_label_set_text(lbl_temp, "");
-    lv_obj_set_pos(lbl_temp, 30, 46);
+    lv_obj_set_pos(lbl_temp, 30, 34);
     lv_obj_add_flag(lbl_temp, LV_OBJ_FLAG_HIDDEN);
 
     drop_img = lv_image_create(scr_clock);
     lv_image_set_src(drop_img, &drop_icon);
     lv_obj_set_style_image_recolor(drop_img, lv_color_black(), 0);
     lv_obj_set_style_image_recolor_opa(drop_img, LV_OPA_COVER, 0);
-    lv_obj_set_pos(drop_img, 6, 67);
+    lv_obj_set_pos(drop_img, 6, 55);
     lv_obj_add_flag(drop_img, LV_OBJ_FLAG_HIDDEN);
 
     lbl_humi = lv_label_create(scr_clock);
     lv_obj_set_style_text_font(lbl_humi, &font_ko_18, 0);
     lv_obj_set_style_text_color(lbl_humi, lv_color_black(), 0);
     lv_label_set_text(lbl_humi, "");
-    lv_obj_set_pos(lbl_humi, 30, 68);
+    lv_obj_set_pos(lbl_humi, 30, 56);
     lv_obj_add_flag(lbl_humi, LV_OBJ_FLAG_HIDDEN);
 
     // Big time: the star of the screen (~40% of height). Centered now that the
@@ -402,7 +402,7 @@ static void build_clock_screen(void) {
     lv_obj_set_style_text_letter_space(lbl_time, -10, 0);
     lv_obj_set_style_text_color(lbl_time, lv_color_black(), 0);
     lv_label_set_text(lbl_time, "00:00");
-    lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_align(lbl_time, LV_ALIGN_TOP_MID, 0, 8);
 
     // Date + weekday in the gap under the 96px clock (normal mode only; compact
     // mode hides it, see apply_clock_layout). font_ko_22 sits between the big
@@ -411,7 +411,7 @@ static void build_clock_screen(void) {
     lv_obj_set_style_text_font(lbl_date, &font_ko_22, 0);
     lv_obj_set_style_text_color(lbl_date, lv_color_black(), 0);
     lv_label_set_text(lbl_date, "");
-    lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 96);
+    lv_obj_align(lbl_date, LV_ALIGN_TOP_MID, 0, 110);
 
     // Quote canvas: one fixed RGB565 canvas (compact box size). Auto-fit font
     // and inline highlight are handled per quote in ui_set_quote. Created
