@@ -181,12 +181,11 @@ void DisplayPort::RLCD_ColorClear(uint8_t color) {
 }
 
 void DisplayPort::RLCD_Display() {
-    // Keep the panel in HPM (High Power Mode) for every update and do NOT drop
-    // to LPM afterward. The LPM (0x39) self-refresh added in v0.05.06.00 held
-    // the image at ~1mA, but the reflective panel intermittently locked up in
-    // that self-refresh state: the image froze while the CPU kept running, and
-    // only a full power cycle (not a GPIO reset) recovered it. HPM idles at
-    // ~5mA (a few mA more) but stays reliable. Frame rate + EQ are set in init.
+    // HPM (32Hz) for a fast, clean GRAM update, then drop back to LPM (1Hz
+    // self-refresh) which holds the static clock image at ~1mA instead of the
+    // ~5mA HPM idle. Frame rate + EQ for both modes are set once in init, so
+    // the switch is a single command. The panel updates once per minute, so the
+    // brief HPM window is negligible.
     RLCD_SendCommand(0x38);   // High Power Mode ON
 
     RLCD_SendCommand(0x2A);   // Column Address Set
@@ -200,6 +199,8 @@ void DisplayPort::RLCD_Display() {
     RLCD_SendCommand(0x2C);   // Memory write
 
     RLCD_Sendbuffera(DispBuffer, DisplayLen);
+
+    RLCD_SendCommand(0x39);   // Low Power Mode ON (holds image at ~1mA)
 }
 
 void DisplayPort::RLCD_Reset(void) {
@@ -212,15 +213,15 @@ void DisplayPort::RLCD_Reset(void) {
 }
 
 void DisplayPort::RLCD_SendCommand(uint8_t Reg) {
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_lcd_panel_io_tx_param(io_handle, Reg, NULL, 0));
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io_handle, Reg, NULL, 0));
 }
 
 void DisplayPort::RLCD_SendData(uint8_t Data) {
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_lcd_panel_io_tx_param(io_handle, -1, &Data, 1));
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io_handle, -1, &Data, 1));
 }
 
 void DisplayPort::RLCD_Sendbuffera(uint8_t *Data, int len) {
-    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_lcd_panel_io_tx_color(io_handle, -1, Data, len));
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_color(io_handle, -1, Data, len));
 }
 
 void DisplayPort::Set_ResetIOLevel(uint8_t level) {
