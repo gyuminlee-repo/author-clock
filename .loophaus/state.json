@@ -1,0 +1,12 @@
+{
+  "active": false,
+  "prompt": "",
+  "completionPromise": "TADA",
+  "maxIterations": 20,
+  "currentIteration": 0,
+  "sessionId": "",
+  "verifyScript": "",
+  "qualityThreshold": 80,
+  "maxRefineAttempts": 3,
+  "qualityConfig": null
+}
