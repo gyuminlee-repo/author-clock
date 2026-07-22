@@ -35,12 +35,12 @@
 ```bash
 cd firmware/tools
 python3 build_data.py      # -> ../data/quotes_min.json, ../data/glyphs.txt
-python3 make_icon.py       # assets/cat_bayer_*.png -> ../main/cat_icon.c(72x72), cat_icon_48.c(48x48)
-bash   build_fonts.sh      # SIL OFL Pretendard subset -> font_ko_28.c, font_ko_44.c, font_digits_96.c
-cp font_ko_28.c font_ko_44.c font_digits_96.c ../main/
+python3 make_cat_icon.py   # 기하 도형으로 그린 자작 고양이 -> ../main/cat_icon.c(72x72), cat_icon_48.c(48x48)
+bash   build_fonts.sh      # 부크크명조 Bold subset -> font_ko_18/22/28/44.c, font_digits_96.c
+cp font_ko_18.c font_ko_22.c font_ko_28.c font_ko_44.c font_digits_96.c ../main/
 ```
 
-`build_data.py`, `make_icon.py`, `build_fonts.sh`는 커밋된다. 원본 TTF와 대용량
+`build_data.py`, `make_cat_icon.py`, `build_fonts.sh`는 커밋된다. 원본 TTF와 대용량
 `font_*.c`는 gitignore(스크립트로 재생성).
 
 ### 1-b. 우상단 아이콘 풀 생성
