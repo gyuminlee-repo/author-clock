@@ -89,6 +89,10 @@ bool net_time_wifi_configured(void) {
     return strlen(WIFI_SSID) != 0;
 }
 
+bool net_time_radio_active(void) {
+    return s_wifi_started;
+}
+
 void net_time_shutdown(void) {
     if (!s_wifi_started) return;   // radio never came up; nothing to stop
     esp_err_t err = esp_wifi_stop();

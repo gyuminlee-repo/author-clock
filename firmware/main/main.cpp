@@ -301,19 +301,34 @@ extern "C" void app_main(void) {
             // needs no LVGL lock (independent peripheral), so read it outside
             // the lock and only the ui_set_battery label update touches LVGL. A
             // failed read passes valid=false, which hides row 3 until recovery.
+            // Skip the battery sample while the radio is up and for one cycle
+            // after it stops. A WiFi burst sags the cell hard: a six-day run
+            // logged a 3828mV minimum against a true 4077mV, and the OCV curve
+            // turns that 240mV dip into a ~30 point drop. Holding the previous
+            // reading is much closer to the truth than the sagged one, and it
+            // keeps the black box minimum meaningful for battery diagnosis.
+            static int batt_cooldown = 0;
+            static uint16_t last_good_mv = 0;
+            if (net_time_radio_active()) batt_cooldown = 2;
+
             float bv = 0.0f;
             int bpct = 0;
             bool bcharging = false;
-            bool bok = battery_read(&bv, &bpct, &bcharging);
+            bool bok = false;
+            if (batt_cooldown > 0) {
+                batt_cooldown--;
+            } else {
+                bok = battery_read(&bv, &bpct, &bcharging);
+                if (bok) last_good_mv = (uint16_t)(bv * 1000.0f);
+            }
             if (Lvgl_lock(-1)) {
                 ui_set_env(tc, hp);
-                ui_set_battery(bpct, bcharging, bok);
+                if (bok) ui_set_battery(bpct, bcharging, bok);
                 Lvgl_unlock();
             }
             // Black box: persist uptime + battery voltage so an on-battery death
             // is readable next boot. Also log heap to rule OOM back in if needed.
-            blackbox_save((uint32_t)(esp_timer_get_time() / 1000000),
-                          bok ? (uint16_t)(bv * 1000.0f) : 0);
+            blackbox_save((uint32_t)(esp_timer_get_time() / 1000000), last_good_mv);
             ESP_LOGW(TAG, "MEM heap=%lu min=%lu | batt=%umV",
                      (unsigned long)esp_get_free_heap_size(),
                      (unsigned long)esp_get_minimum_free_heap_size(),

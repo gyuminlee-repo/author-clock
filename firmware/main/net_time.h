@@ -59,6 +59,11 @@ bool net_time_sync(void);
 // retrying net_time_sync() when no credentials exist (RTC-only, no radio).
 bool net_time_wifi_configured(void);
 
+// True while the WiFi radio is powered (between esp_wifi_start and
+// net_time_shutdown). Callers use this to drop ADC battery samples taken during
+// a radio burst, which sags the cell far below its true resting voltage.
+bool net_time_radio_active(void);
+
 // Stop the WiFi radio after the NTP window closes (or immediately in the
 // RTC-only path). Safe to call when WiFi was never started: it no-ops if the
 // bring-up in net_time_sync never ran.
