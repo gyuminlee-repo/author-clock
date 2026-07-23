@@ -536,11 +536,25 @@ void ui_set_quote(const quote_t *q) {
     // fit, switch to the compact layout (44px time, bigger box) with 22 ->
     // 18px. On overflow beyond the compact box the smallest font is drawn and
     // extra lines are clipped by the canvas.
+    // Build the source line first: a long "title · author" wraps to two lines,
+    // and lbl_source is bottom-anchored, so the second line grows up into the
+    // quote. When that happens, reserve one extra source line so the quote body
+    // stops above it instead of overlapping. run_w > QUOTE_W means it wraps.
+    char src[160];
+    const char *a = q->a ? q->a : "";
+    const char *w = q->w ? q->w : "";
+    if (a[0] && w[0]) snprintf(src, sizeof(src), "%s  ·  %s", a, w);
+    else              snprintf(src, sizeof(src), "%s%s", a, w);
+    int32_t src_w = run_w(&font_ko_18, src, 0, (uint32_t)strlen(src));
+    int32_t src_extra = (src_w > QUOTE_W) ? lv_font_get_line_height(&font_ko_18) : 0;
+    int32_t avail_n = QUOTE_H_N - src_extra;
+    int32_t avail_c = QUOTE_H_C - src_extra;
+
     const lv_font_t *chosen = NULL;
     bool compact = false;
     for (int i = 0; i < QUOTE_FONT_N_CNT; i++) {
         const lv_font_t *f = QUOTE_FONTS_N[i];
-        if (quote_nlines(q->q, f, QUOTE_W) * quote_line_h(f) <= QUOTE_H_N) {
+        if (quote_nlines(q->q, f, QUOTE_W) * quote_line_h(f) <= avail_n) {
             chosen = f;
             break;
         }
@@ -549,7 +563,7 @@ void ui_set_quote(const quote_t *q) {
         compact = true;
         for (int i = 0; i < QUOTE_FONT_C_CNT; i++) {
             const lv_font_t *f = QUOTE_FONTS_C[i];
-            if (quote_nlines(q->q, f, QUOTE_W) * quote_line_h(f) <= QUOTE_H_C) {
+            if (quote_nlines(q->q, f, QUOTE_W) * quote_line_h(f) <= avail_c) {
                 chosen = f;
                 break;
             }
@@ -570,18 +584,13 @@ void ui_set_quote(const quote_t *q) {
     }
 
     if (canvas_buf) {
-        int32_t box_h = compact ? QUOTE_H_C : QUOTE_H_N;
+        int32_t box_h = (compact ? QUOTE_H_C : QUOTE_H_N) - src_extra;
         lv_canvas_fill_bg(canvas_quote, lv_color_white(), LV_OPA_COVER);
         render_quote(canvas_quote, q->q, hl_start, hl_end, chosen,
                      quote_line_h(chosen), CANVAS_W, box_h);
     }
     lv_obj_invalidate(canvas_quote);
 
-    char src[160];
-    const char *a = q->a ? q->a : "";
-    const char *w = q->w ? q->w : "";
-    if (a[0] && w[0]) snprintf(src, sizeof(src), "%s  ·  %s", a, w);
-    else              snprintf(src, sizeof(src), "%s%s", a, w);
     lv_label_set_text(lbl_source, src);
 }
 
